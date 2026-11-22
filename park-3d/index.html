@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>夕照草坪 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* 版面：全螢幕 3D 場景，左上角一塊半透明控制面板（像相機的取景資訊） */
+:root {
+  --bg: #d9e6ef;
+  --panel: rgba(250, 250, 244, 0.78);
+  --panel-line: rgba(60, 70, 40, 0.16);
+  --fg: #1f2a1c;
+  --muted: #5b6652;
+  --accent: #c8781f;
+  --accent-fg: #ffffff;
+  --track: rgba(40, 50, 30, 0.18);
+  --font-ui: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1612;
+    --panel: rgba(18, 24, 18, 0.74);
+    --panel-line: rgba(220, 230, 200, 0.14);
+    --fg: #eef2e6;
+    --muted: #a9b49c;
+    --accent: #f0a23e;
+    --accent-fg: #1b1408;
+    --track: rgba(230, 240, 210, 0.2);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1612;
+  --panel: rgba(18, 24, 18, 0.74);
+  --panel-line: rgba(220, 230, 200, 0.14);
+  --fg: #eef2e6;
+  --muted: #a9b49c;
+  --accent: #f0a23e;
+  --accent-fg: #1b1408;
+  --track: rgba(230, 240, 210, 0.2);
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); overflow: hidden; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.vignette {
+  position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 50% 45%, transparent 62%, rgba(20, 30, 10, 0.28) 100%);
+}
+.panel {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: max(16px, env(safe-area-inset-left, 0px));
+  width: min(320px, calc(100vw - 32px));
+  background: var(--panel);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  padding: 14px 16px 14px;
+  display: grid;
+  gap: 12px;
+  box-shadow: 0 8px 30px rgba(10, 20, 5, 0.18);
+}
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+h1 { font-size: 1.15rem; font-weight: 700; margin: 0; letter-spacing: 0.02em; text-wrap: balance; }
+.sub { margin: 2px 0 0; font-size: 0.78rem; color: var(--muted); line-height: 1.45; }
+.toggle {
+  border: 1px solid var(--panel-line); background: transparent; color: var(--fg);
+  font: 500 0.75rem var(--font-ui); border-radius: 6px; padding: 3px 8px; cursor: pointer;
+}
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.stat { display: grid; gap: 1px; }
+.stat b { font: 500 0.95rem var(--font-data); font-variant-numeric: tabular-nums; }
+.stat span { font-size: 0.68rem; color: var(--muted); letter-spacing: 0.04em; }
+.buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.buttons button {
+  font: 500 0.82rem var(--font-ui); color: var(--fg); background: transparent;
+  border: 1px solid var(--panel-line); border-radius: 8px; padding: 7px 8px; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.buttons button:hover { border-color: var(--accent); }
+.buttons button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.slider { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; font-size: 0.8rem; }
+.slider output { font: 500 0.78rem var(--font-data); color: var(--muted); min-width: 4.6em; text-align: right; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.hint { font-size: 0.78rem; color: var(--muted); line-height: 1.5; margin: 0; transition: opacity 0.4s; }
+.hint.dim { opacity: 0.6; }
+.hint kbd { font: 500 0.72rem var(--font-data); border: 1px solid var(--panel-line); border-radius: 4px; padding: 0 4px; }
+.panel.collapsed > :not(.head) { display: none; }
+#loading {
+  position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg);
+  transition: opacity 0.6s; z-index: 5;
+}
+#loading.done { opacity: 0; pointer-events: none; }
+#loading p { font-size: 0.95rem; color: var(--muted); margin: 0; padding-inline: 16px; text-align: center; }
+#loading strong { display: block; font-size: 1.4rem; color: var(--fg); margin-bottom: 8px; }
+@media (max-width: 560px) {
+  .panel { top: auto; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); padding: 12px 14px; gap: 10px; }
+  .sub { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { #loading { transition: none; } }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="scene" aria-label="公園草坪的 3D 場景"></canvas>
+<div class="vignette"></div>
+
+<section class="panel" id="panel" aria-label="場景控制">
+  <div class="head">
+    <div>
+      <h1>夕照草坪</h1>
+      <p class="sub">依照片程序化重建的 3D 公園，人物、球、飛盤、野餐墊與眼球氣球都在即時物理模擬中。</p>
+    </div>
+    <button class="toggle" id="btn-toggle" aria-expanded="true">收合</button>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="stat-people">–</b><span>人</span></div>
+    <div class="stat"><b id="stat-trees">–</b><span>樹</span></div>
+    <div class="stat"><b id="stat-bodies">–</b><span>物理物件</span></div>
+    <div class="stat"><b id="stat-fps">–</b><span>FPS</span></div>
+  </div>
+  <div class="buttons">
+    <button id="btn-photo" class="primary">回到照片視角</button>
+    <button id="btn-follow">跟隨一個人</button>
+    <button id="btn-gust">吹一陣強風</button>
+    <button id="btn-clear">清除丟出的球</button>
+  </div>
+  <label class="slider" for="wind">風速
+    <input id="wind" type="range" min="0" max="8" step="0.1" value="2.6">
+    <output id="wind-val">2.6 m/s</output>
+  </label>
+  <label class="slider" for="sun">太陽仰角
+    <input id="sun" type="range" min="4" max="60" step="1" value="17">
+    <output id="sun-val">17°</output>
+  </label>
+  <p class="hint" id="hint">點擊草地丟出足球，附近的人會跑過去把球踢回來。拖曳旋轉視角，滾輪或雙指縮放，右鍵平移。</p>
+</section>
+
+<div id="loading"><p><strong>夕照草坪</strong><span id="loading-msg">載入 three.js…</span></p></div>
+
+<script>
+  document.getElementById('btn-toggle').addEventListener('click', (e) => {
+    const p = document.getElementById('panel');
+    const c = p.classList.toggle('collapsed');
+    e.currentTarget.textContent = c ? '展開' : '收合';
+    e.currentTarget.setAttribute('aria-expanded', String(!c));
+  });
+  if (Math.min(innerWidth, innerHeight) < 600) document.getElementById('btn-toggle').click();
+</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
