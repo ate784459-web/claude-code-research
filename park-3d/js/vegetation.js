@@ -234,26 +234,40 @@ export class Vegetation {
     };
     const add = (spec) => { placed.push(spec); return spec; };
 
-    // 掛眼球氣球的樹（照片右側中段）
-    add({ x: 36, z: -34, type: 'broad', size: 1.1, trunkH: 4.6, minD: 8, eyes: [{ dx: -4.6, dz: 2.2 }, { dx: -4.9, dz: -1.4 }] });
-    add({ x: 38, z: -66, type: 'broad', size: 1.0, trunkH: 4.8, minD: 8, eyes: [{ dx: -4.2, dz: 0.4, pair: 1.25 }] });
+    // ---- 依照片配準的樹（位置由照片中的樹幹位置反投影而來）----
+    // 掛綠色眼球的樹、掛一對白色眼球（背面朝外）的樹
+    add({ x: 35.4, z: -20.5, type: 'broad', size: 1.1, trunkH: 5, hs: 1.8, side: 'R', minD: 3 });
+    add({ x: 35.5, z: -58.1, type: 'broad', size: 1.0, trunkH: 5.2, hs: 1.7, side: 'R', minD: 3 });
+    // 眼球氣球（位置由照片反投影）：綠色虹膜那一對看向觀看者，上方那一對背對（照片中只看到白色背面）
+    this.eyeSpots = [
+      { x: 31.2, z: -19.5, h: 8.7, look: 'viewer' }, { x: 33.4, z: -19.5, h: 8.7, look: 'viewer' },
+      { x: 32.2, z: -57, h: 11.2, look: 'away' }, { x: 34.6, z: -57, h: 11.2, look: 'away' },
+    ];
+    // 紅土區上清楚可見的一排樹幹
+    for (const [x, z, h] of [[31.1, -61.3, 1.8], [35.5, -54.9, 1.85], [37.4, -40, 2.4], [41.3, -25.5, 2.3], [44.7, -18.1, 2.1], [45.4, -13.2, 2.1], [51.7, -19.6, 2.1]]) {
+      add({ x, z, type: 'broad', size: rng.range(1.0, 1.15), trunkH: rng.range(5, 6.5), hs: h, side: 'R', minD: 3, tint: rng.chance(0.4) ? 0.35 : 0, dark: z > -27 });
+    }
+    // 照片右上角：靠近相機的高大樟樹與木棉
+    add({ x: 43, z: 2, type: 'broad', size: 1.15, trunkH: 5, hs: 1.5, side: 'R', minD: 9, dark: true });
+    add({ x: 40, z: 22, type: 'broad', size: 1.1, trunkH: 4.5, hs: 1.2, side: 'R', minD: 9, dark: true });
+    add({ x: 44, z: 14, type: 'bare', size: 1.45, minD: 6 });
     // 前景右下的大樹冠
-    add({ x: 22, z: 47, type: 'broad', size: 1.2, trunkH: 1.8, minD: 10, tint: 0, side: 'R', hero: true });
-    // 遠方坡頂：棕櫚、木棉、孤立大樹
-    add({ x: 0.5, z: -300, type: 'palm', size: 1.1, minD: 4 });
-    add({ x: -24, z: -298, type: 'bare', size: 1.15, minD: 6 });
-    add({ x: 13, z: -286, type: 'bare', size: 1.05, minD: 6 });
-    add({ x: 20, z: -290, type: 'bare', size: 0.95, minD: 6 });
-    add({ x: 40, z: -262, type: 'bare', size: 1.0, minD: 6 });
-    add({ x: 58, z: -246, type: 'bare', size: 0.9, minD: 6 });
-    add({ x: -47, z: -270, type: 'bare', size: 1.1, minD: 6 });
-    add({ x: -19, z: -304, type: 'broad', size: 1.0, minD: 7 });
+    // 照片右下角其實是相機正下方一棵樹的樹冠（頂端約離地 7 m）
+    add({ x: 20, z: 50, type: 'broad', size: 1.3, trunkH: 0.5, hs: 0.85, minD: 10, tint: 0, side: 'R', hero: true });
+    // 遠方坡頂：大王椰子、木棉、中央偏右的大樹
+    add({ x: -1.9, z: -309, type: 'palm', size: 1.1, minD: 4 });
+    add({ x: 17, z: -276, type: 'broad', size: 1.3, hs: 2.0, trunkH: 4, minD: 9 });
+    add({ x: 16, z: -292, type: 'bare', size: 1.65, minD: 6 });
+    add({ x: 34, z: -285, type: 'bare', size: 1.5, minD: 6 });
+    add({ x: 54, z: -280, type: 'bare', size: 1.4, minD: 6 });
+    add({ x: -61, z: -285, type: 'bare', size: 1.55, minD: 6 });
+    add({ x: -32, z: -300, type: 'bare', size: 1.2, minD: 6 });
+    add({ x: -21, z: -304, type: 'broad', size: 0.95, minD: 7 });
     add({ x: -28, z: -318, type: 'broad', size: 0.9, minD: 7 });
-    add({ x: 24, z: -300, type: 'broad', size: 1.2, minD: 8 });
-    add({ x: 34, z: -292, type: 'broad', size: 1.0, minD: 7 });
-    add({ x: -34, z: -310, type: 'broad', size: 1.1, minD: 8 });
-    add({ x: -46, z: -300, type: 'broad', size: 1.0, minD: 7 });
-    add({ x: 15, z: -322, type: 'broad', size: 0.8, minD: 6 });
+    add({ x: 32, z: -300, type: 'broad', size: 1.1, hs: 1.4, minD: 8 });
+    add({ x: -38, z: -310, type: 'broad', size: 1.1, hs: 1.3, minD: 8 });
+    add({ x: -48, z: -296, type: 'broad', size: 1.0, hs: 1.3, minD: 7 });
+    add({ x: 9, z: -326, type: 'broad', size: 0.8, minD: 6 });
 
     const tryArea = (n, gen) => {
       let tries = 0, made = 0;
@@ -272,35 +286,38 @@ export class Vegetation {
       const z = rng.range(-300, 160);
       const L = T.lawnLeft(z);
       const depth = Math.pow(rng.next(), 1.3) * 70;
+      // 照片左下：步道旁只有零星細高的樹，陽光會從樹間灑到野餐區
+      if (z > -25 && depth < 16) return null;
       const x = L - 4.5 - depth;
       const near = depth < 22;
-      return { x, z, type: rng.chance(0.02) ? 'bare' : 'broad', size: rng.range(0.9, 1.25), minD: near ? 7 : 9, far: !near, trunkH: rng.range(2.4, 4.4), side: 'L' };
+      // 照片中左側中遠處是一整片低垂的深色樹冠（看不到樹幹）
+      return { x, z, type: rng.chance(0.02) ? 'bare' : 'broad', size: rng.range(0.95, 1.25), minD: near ? 7 : 9, far: !near, trunkH: z < -30 ? rng.range(1.0, 2.0) : rng.range(2.6, 4.4), side: 'L', hs: z > -30 ? rng.range(1.0, 1.2) : z > -200 ? rng.range(1.5, 1.75) : rng.range(1.2, 1.4) };
     });
     // 步道與草坪之間零星的樹（照片左下的細長樹幹）
-    tryArea(Math.round(10 * Q), () => {
-      const z = rng.range(-20, 70);
-      const x = T.pathXAt(z) - rng.range(3.5, 9);
-      return { x, z, type: 'slim', size: rng.range(0.9, 1.1), minD: 6, trunkH: rng.range(3.5, 5.5) };
+    tryArea(Math.round(4 * Q), () => {
+      const z = rng.range(-25, 40);
+      const x = T.pathXAt(z) - rng.range(8, 15);
+      return { x, z, type: 'slim', size: rng.range(0.9, 1.1), minD: 9, trunkH: rng.range(6, 8.5), hs: 1.2 };
     });
     // 右側紅土區：樹幹清楚的樹
     tryArea(Math.round(46 * Q), () => {
       const z = rng.range(-250, 120);
       const R = T.lawnRight(z);
       const x = R + rng.range(2.5, 24);
-      return { x, z, type: 'broad', size: rng.range(0.85, 1.15), minD: 7.5, trunkH: rng.range(4.8, 7), tint: rng.chance(0.4) ? rng.range(0.2, 0.6) : 0, side: 'R' };
+      return { x, z, type: 'broad', size: rng.range(0.9, 1.15), minD: 7.5, trunkH: rng.range(4.8, 6.5), tint: rng.chance(0.4) ? rng.range(0.2, 0.6) : 0, side: 'R', dark: z > -40, hs: z > -40 ? rng.range(1.9, 2.2) : z > -100 ? rng.range(2.3, 2.6) : z > -170 ? rng.range(1.45, 1.6) : rng.range(1.3, 1.5) };
     });
     // 右側後方密林
     tryArea(Math.round(150 * Q), () => {
       const z = rng.range(-320, 160);
       const R = T.lawnRight(z);
       const x = R + 38 + Math.pow(rng.next(), 1.4) * 50;
-      return { x, z, type: rng.chance(0.02) ? 'bare' : 'broad', size: rng.range(0.9, 1.3), minD: 8.5, far: true, trunkH: rng.range(3, 5), tint: rng.chance(0.3) ? rng.range(0.2, 0.5) : 0, side: 'R' };
+      return { x, z, type: rng.chance(0.02) ? 'bare' : 'broad', size: rng.range(0.9, 1.3), minD: 8.5, far: true, trunkH: rng.range(3, 5), tint: rng.chance(0.3) ? rng.range(0.2, 0.5) : 0, side: 'R', hs: z > -100 ? rng.range(2.2, 2.5) : z > -170 ? rng.range(1.7, 1.9) : rng.range(1.4, 1.6) };
     });
     // 坡頂後方樹林
     tryArea(Math.round(50 * Q), () => {
       const z = rng.range(-380, -315);
       const x = rng.range(-110, 110);
-      if (Math.abs(x - 1) < 16) return null; // 中央留缺口看遠山
+      if (Math.abs(x + 8) < 12) return null; // 中央留缺口看遠山（照片中棕櫚左側）
       return { x, z, type: rng.chance(0.04) ? 'bare' : 'broad', size: rng.range(0.9, 1.3), minD: 9, far: true, trunkH: rng.range(3, 5) };
     });
     // 相機後方（環繞時才看得到）
@@ -323,6 +340,26 @@ export class Vegetation {
 
   build() {
     const specs = this.specs || this.plan();
+    // 眼球氣球位置：周圍與朝照片視角方向的葉叢要挖空，眼球才會像照片那樣露出來
+    this.eyeClear = [];
+    for (const e of this.eyeSpots || []) {
+      const gy = this.terrain.height(e.x, e.z);
+      const c = new THREE.Vector3(e.x, gy + e.h, e.z);
+      this.eyeClear.push(c);
+      // 繩長 1.6 m + 半徑 1.15 m
+      this.eyeAnchors.push({ x: e.x, y: c.y + 2.75, z: e.z, pair: 0, look: e.look });
+    }
+    const VIEW = new THREE.Vector3(7, 17.5, 80);
+    this._blocksEye = (p, r) => {
+      for (const e of this.eyeClear) {
+        if (p.distanceTo(e) < r + 1.5) return true;
+        // 眼球往相機方向 30 m 的視線
+        const d = VIEW.clone().sub(e).normalize();
+        const t = clamp(p.clone().sub(e).dot(d), 0, 30);
+        if (p.distanceTo(e.clone().addScaledVector(d, t)) < r * 0.8 + 1.2) return true;
+      }
+      return false;
+    };
     const wood = new GeoBuilder();
     const leaves = new GeoBuilder();
     const cores = new GeoBuilder();
@@ -380,8 +417,9 @@ export class Vegetation {
     const size = s.size ?? 1;
     const far = !!s.far;
     const slim = s.type === 'slim';
-    const trunkH = (s.trunkH ?? rng.range(2.5, 4.5)) * size;
-    const r0 = rng.range(0.24, 0.38) * size * (slim ? 0.7 : 1);
+    const hs = s.hs ?? 1; // 高度倍率（依照片中樹冠的高度校正）：樹冠長得比樹幹多
+    const trunkH = (s.trunkH ?? rng.range(2.5, 4.5)) * size * Math.sqrt(hs);
+    const r0 = rng.range(0.24, 0.38) * size * (slim ? 0.7 : 1) * Math.sqrt(hs);
     const barkCol = new THREE.Color().setHSL(0.08, 0.1, rng.range(0.34, 0.5));
     const lean = new THREE.Vector3(rng.range(-0.1, 0.1), 1, rng.range(-0.1, 0.1)).normalize();
     const mid = base.clone().addScaledVector(lean, trunkH * 0.55);
@@ -393,8 +431,8 @@ export class Vegetation {
     this.colliders.push({ x: base.x, z: base.z, r: r0 * 1.15, h: trunkH + 1 });
 
     // 樹冠橢球
-    const CR = rng.range(4.2, 6.0) * size * (slim ? 0.65 : 1);
-    const CH = CR * rng.range(0.7, 0.9);
+    const CR = rng.range(4.2, 6.0) * size * (slim ? 0.65 : 1) * (1 + (hs - 1) * 0.45);
+    const CH = CR * rng.range(0.7, 0.9) * (1 + (hs - 1) * 0.6);
     const cc = top.clone(); cc.y += CH * 0.55; cc.x += lean.x * 1.5; cc.z += lean.z * 1.5;
 
     // 主枝
@@ -411,7 +449,7 @@ export class Vegetation {
     }
 
     // 葉叢：均勻分佈在橢球內（偏向表面）
-    const nC = Math.round((far ? rng.range(9, 12) : rng.range(16, 22)) * (slim ? 0.6 : 1));
+    const nC = Math.round((far ? rng.range(9, 12) : rng.range(16, 22)) * (slim ? 0.6 : 1) * (1 + (hs - 1) * 1.2));
     const clusters = [];
     for (let i = 0; i < nC; i++) {
       const u = rng.range(-0.55, 1), ph = rng.next() * Math.PI * 2;
@@ -433,17 +471,18 @@ export class Vegetation {
     // 照片中左側樹林偏暗、偏橄欖綠；右側向陽的樹偏黃綠、帶秋色
     const side = s.side ?? (base.x > 0 ? 'R' : 'L');
     const pal = side === 'R'
-      ? { h: [0.14, 0.19], s: [0.65, 0.85], l: [0.44, 0.6] }
-      : { h: [0.21, 0.27], s: [0.3, 0.45], l: [0.18, 0.3] };
+      ? (s.dark ? { h: [0.15, 0.2], s: [0.45, 0.65], l: [0.2, 0.32] } : { h: [0.14, 0.19], s: [0.6, 0.8], l: [0.36, 0.52] })
+      : { h: [0.2, 0.26], s: [0.32, 0.5], l: [0.27, 0.42] };
     const baseHue = rng.range(pal.h[0], pal.h[1]);
     const tint = s.tint ?? 0;
     const nrm = new THREE.Vector3(), ax = new THREE.Vector3(), ay = new THREE.Vector3(), p = new THREE.Vector3();
     const q = new THREE.Quaternion(), e = new THREE.Euler();
     const sunSide = new THREE.Vector3(0.6, 0.45, 0.65).normalize();
     for (const k of clusters) {
-      const coreCol = new THREE.Color().setHSL(baseHue, 0.45, (s.hero ? 0.16 : 0.08) + rng.next() * 0.04);
+      if (this._blocksEye && this._blocksEye(k.c, k.r)) continue;
+      const coreCol = new THREE.Color().setHSL(baseHue, 0.45, 0.07 + rng.next() * 0.04);
       cores.blob(k.c, k.r * 0.55, 0.82, coreCol, 0.75, rng, far ? 0 : 1);
-      const cards = Math.round((far ? rng.range(10, 13) : rng.range(18, 24)) * (s.hero ? 2.2 : 1));
+      const cards = Math.round((far ? rng.range(10, 13) : rng.range(18, 24)) * (s.hero ? 4.5 : 1));
       const autumn = rng.chance(tint);
       for (let i = 0; i < cards; i++) {
         const u = rng.next() * 2 - 1, phi = rng.next() * Math.PI * 2;
@@ -456,7 +495,7 @@ export class Vegetation {
         nrm.y += 0.2; nrm.normalize();
         e.set(rng.next() * Math.PI, rng.next() * Math.PI, rng.next() * Math.PI);
         q.setFromEuler(e);
-        const sz = rng.range(0.7, 1.0) * size * (far ? 1.35 : 1);
+        const sz = rng.range(0.7, 1.0) * size * (far ? 1.35 : 1) * (s.hero ? 0.5 : 1);
         ax.set(sz, 0, 0).applyQuaternion(q);
         ay.set(0, sz, 0).applyQuaternion(q);
         const col = new THREE.Color();
@@ -466,13 +505,15 @@ export class Vegetation {
         const outward = clamp(p.distanceTo(cc) / (CR + 0.01), 0.3, 1.15);
         const sunny = 0.85 + 0.25 * Math.max(0, nrm.dot(sunSide));
         col.multiplyScalar((0.7 + 0.4 * outward) * sunny);
+        // 前景樹冠：上半部受光、下半部在陰影裡（照片右下角）
+        if (s.hero) col.multiplyScalar(lerp(0.3, 1.15, smoothstep(cc.y - CH * 0.5, cc.y + CH * 0.9, p.y)));
         leaves.card(p, ax, ay, nrm, col, 0.75);
       }
     }
 
     if (s.eyes) {
       for (const eye of s.eyes) {
-        this.eyeAnchors.push({ x: base.x + eye.dx, y: cc.y + CH * 0.2, z: base.z + eye.dz, pair: eye.pair || 0 });
+        this.eyeAnchors.push({ x: base.x + eye.dx, y: eye.ay !== undefined ? base.y + 0.3 + eye.ay : cc.y + CH * 0.2, z: base.z + eye.dz, pair: eye.pair || 0 });
       }
     }
   }

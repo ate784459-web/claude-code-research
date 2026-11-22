@@ -15,7 +15,7 @@ const params = new URLSearchParams(location.search);
 const QUALITY = params.has('q') ? parseFloat(params.get('q')) : isMobile ? 0.55 : 1;
 
 // 照片構圖的相機
-const PHOTO_VIEW = { pos: new THREE.Vector3(7, 17.5, 80), target: new THREE.Vector3(0, 9.6, -60), fov: 31 };
+const PHOTO_VIEW = { pos: new THREE.Vector3(7, 17.5, 80), target: new THREE.Vector3(4.9, 7.5, -60), fov: 31 };
 
 const status = (msg) => { const el = $('loading-msg'); if (el) el.textContent = msg; };
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
@@ -58,15 +58,15 @@ async function init() {
   scene.add(sky.mesh);
   scene.add(createDistantHills());
 
-  let sunElev = 17, sunAzim = 58; // 度
+  let sunElev = look.sunElev; // 度（方位角由 look.sunAzim 決定）
   function updateSun() {
-    const el = THREE.MathUtils.degToRad(sunElev), az = THREE.MathUtils.degToRad(sunAzim);
+    const el = THREE.MathUtils.degToRad(sunElev), az = THREE.MathUtils.degToRad(look.sunAzim);
     // azimuth 從 +X 往 +Z 量
     sunDir.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).normalize();
     sky.uniforms.uSunDir.value.copy(sunDir);
     // 仰角越低越暖、越暗；以 17° 時的照片色調為基準
     const warm = 1 - clamp((sunElev - 5) / 45, 0, 1);
-    const w0 = 1 - clamp((17 - 5) / 45, 0, 1);
+    const w0 = 1 - clamp((look.sunElev - 5) / 45, 0, 1);
     const k = clamp(warm / w0, 0, 1.4);
     const sw = look.sunWarm;
     sun.color.setRGB(lerp(1.0, sw[0], k), lerp(0.97, sw[1], k), lerp(0.93, sw[2], k));
@@ -75,7 +75,7 @@ async function init() {
     hemi.color.setRGB(...look.hemiSky);
     hemi.groundColor.setRGB(...look.hemiGround);
     // 自動曝光：像相機一樣，太陽升高時收一點曝光，維持照片的明暗
-    const ref = Math.sin(THREE.MathUtils.degToRad(17));
+    const ref = Math.sin(THREE.MathUtils.degToRad(look.sunElev));
     renderer.toneMappingExposure = look.exposure * clamp(Math.pow(ref / Math.max(0.05, Math.sin(el)), 0.6), 0.55, 1.3);
   }
 
@@ -95,6 +95,12 @@ async function init() {
   const grade = new ShaderPass(GradeShader);
   composer.addPass(grade);
   grade.uniforms.uAspect.value = innerWidth / innerHeight;
+  // 照片視角的投影矩陣（16:9）交給天空著色器，用來放置照片中的雲
+  {
+    const pc = new THREE.PerspectiveCamera(PHOTO_VIEW.fov, 16 / 9, 1, 10);
+    pc.position.copy(PHOTO_VIEW.pos); pc.lookAt(PHOTO_VIEW.target); pc.updateMatrixWorld();
+    sky.uniforms.uPhotoVP.value.multiplyMatrices(pc.projectionMatrix, pc.matrixWorldInverse);
+  }
   const lookCtx = { renderer, scene, sky, terrainU: terrain.uniforms, veg, grade, updateSun };
   applyLook(look, lookCtx);
 

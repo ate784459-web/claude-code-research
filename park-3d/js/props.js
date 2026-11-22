@@ -364,10 +364,11 @@ export class Props {
     return d;
   }
 
-  addEyeBalloon(anchor, offsetX = 0) {
+  addEyeBalloon(anchor, offsetX = 0, look = 'viewer') {
     const a = anchor.clone(); a.x += offsetX;
     const R = 1.15;
     const rope = new RopeBalloon(a, 1.6, 6, R, 6);
+    rope.lookAway = look === 'away';
     this.physics.ropes.push(rope);
     if (!this.eyeTex) this.eyeTex = eyeTexture();
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(R, 40, 28), new THREE.MeshStandardMaterial({ map: this.eyeTex, roughness: 0.28, metalness: 0 }));

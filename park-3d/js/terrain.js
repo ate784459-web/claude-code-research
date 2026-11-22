@@ -4,18 +4,29 @@ import { makeNoise2D, fbm, clamp, lerp, smoothstep } from './noise.js';
 // 世界座標：公尺。相機在 +Z 端的高處，往 -Z 方向看整條草坪（與照片相同的構圖）。
 export const WORLD = { minX: -260, maxX: 260, minZ: -520, maxZ: 170 };
 
-// 步道中心線控制點 (x, z)：左下進入畫面，中段向右彎，再沿草坪左緣往遠方延伸進入樹林。
+// 步道中心線控制點 (x, z)：由照片中的步道位置經相機反投影到地形上取得（照片配準）。
+// 左下角進入畫面 → 中段右彎、再往左上爬 → 沿草坪左緣進入樹林。
 const PATH_POINTS = [
-  [-10, 175], [-15, 135], [-20, 100], [-24, 66], [-27, 36], [-29, 10], [-30, -12],
-  [-27, -30], [-21, -44], [-16, -58], [-15, -75], [-17, -95], [-19, -120], [-20, -150],
-  [-22, -180], [-27, -210], [-35, -238], [-48, -262], [-64, -282], [-80, -300],
+  [-2, 175], [-3, 140], [-5, 110], [-7, 80], [-8.5, 58], [-9.8, 43.7], [-12.9, 37.1], [-17.3, 26.4], [-23, 9.5],
+  [-25.5, -5], [-26.5, -22], [-30.5, -35], [-29, -44], [-25.5, -51], [-24, -70], [-26.8, -115], [-30, -150],
+  [-38, -190], [-50, -230], [-64, -260], [-80, -290],
 ];
+// 草坪右緣（與紅土交界），同樣由照片配準：[z, x]
+const LAWN_RIGHT = [[170, 36], [60, 34], [20, 34], [-5, 33], [-19, 33], [-28, 30], [-45, 25.5], [-57, 23.5], [-90, 25], [-137, 27.3], [-225, 29.5], [-291, 25.2], [-330, 18]];
+// 步道進入樹林後，草坪左緣改由林緣決定：[z, x]
+const LAWN_LEFT_FAR = [[-115, -24.4], [-165, -23.5], [-224, -22.3], [-268, -20], [-300, -12], [-340, -6]];
+function polyAt(pts, z) {
+  if (z >= pts[0][0]) return pts[0][1];
+  for (let i = 1; i < pts.length; i++) {
+    if (z >= pts[i][0]) { const t = (z - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]); return pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t; }
+  }
+  return pts[pts.length - 1][1];
+}
 
-// 沙坑（橢圓 + 噪聲邊緣）
+// 沙坑（橢圓 + 噪聲邊緣），位置依照片配準
 export const BUNKERS = [
-  { x: -6, z: -72, rx: 8.5, rz: 2.4, rot: 0.12, depth: 0.35 },
-  { x: 25.5, z: -50, rx: 7.5, rz: 2.2, rot: -0.18, depth: 0.3 },
-  { x: 6, z: -175, rx: 5.5, rz: 1.8, rot: 0.3, depth: 0.3 },
+  { x: -19.5, z: -51, rx: 6.2, rz: 1.8, rot: 0.62, depth: 0.35 },
+  { x: 26.5, z: -52, rx: 4.8, rz: 1.6, rot: -0.29, depth: 0.3 },
 ];
 
 export const PATH_WIDTH = 2.6;
@@ -94,12 +105,11 @@ export class Terrain {
   }
   lawnLeft(z) {
     const n = this.noise(z * 0.05, 3.3) * 0.8;
-    if (z > -200) return this.pathXAt(z) + 2.2 + n;
-    return lerp(this.pathXAt(-200) + 2.2, -6, smoothstep(-200, -300, z)) + n;
+    if (z > -115) return this.pathXAt(z) + 2.2 + n;
+    return polyAt(LAWN_LEFT_FAR, z) + n;
   }
   lawnRight(z) {
-    const far = clamp(-z - 40, 0, 260);
-    return 29 + 3 * Math.sin(z * 0.021) - far * 0.05 + this.noise(z * 0.04, 9.1) * 1.6;
+    return polyAt(LAWN_RIGHT, z) + this.noise(z * 0.04, 9.1) * 1.2;
   }
 
   baseHeight(x, z) {
@@ -117,10 +127,11 @@ export class Terrain {
     const hw = (R - L) / 2;
     const u = clamp((x - cv) / hw, -1.25, 1.25);
     let lat;
-    if (u < 0) lat = 2.8 * u * u;
+    // 近處野餐斜坡較緩（依照片中步道的位置校正），遠處較陡
+    if (u < 0) lat = lerp(1.1, 2.8, smoothstep(-20, -90, z)) * u * u;
     else lat = 1.1 * u * u;
     // 草坪外：左側緩坡上林地、右側紅土區幾乎平坦
-    if (x < L) lat += Math.min(L - x, 30) * 0.12 + Math.max(0, L - 30 - x) * 0.03;
+    if (x < L) lat += Math.min(L - x, 30) * 0.16 + Math.max(0, L - 30 - x) * 0.04;
     if (x > R) lat += Math.min(x - R, 40) * 0.035 + Math.max(0, x - R - 40) * 0.02;
     // 噪聲：草坪上平滑，林地起伏較大
     const onLawn = x > L - 4 && x < R + 2 ? 1 : 0;
@@ -407,7 +418,7 @@ diffuseColor.rgb = groundColor(vWPos.xz, gm, detail);
     tex.repeat.set(1, 0.25);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 8;
-    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92, color: 0xd9d3c6 });
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92, color: 0xf2ede2 });
     mat.polygonOffset = true; mat.polygonOffsetFactor = -2; mat.polygonOffsetUnits = -2;
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = true;

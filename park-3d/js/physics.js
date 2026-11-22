@@ -545,7 +545,7 @@ export class PhysicsWorld {
     // 方向：眼睛慢慢轉向觀看者（扭轉彈簧 + 阻尼）
     for (const r of this.ropes) {
       const dx = this.lookTarget.x - r.center.x, dz = this.lookTarget.z - r.center.z;
-      const target = Math.atan2(dx, dz);
+      const target = Math.atan2(dx, dz) + (r.lookAway ? Math.PI * 0.85 : 0);
       let diff = target - r.yaw;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       r.yawVel += (diff * 0.9 - r.yawVel * 1.1 + (Math.sin(this.time * 0.7 + r.anchor.x) * 0.15) * this.wind.gustFactor(r.center.x, r.center.z)) * h;

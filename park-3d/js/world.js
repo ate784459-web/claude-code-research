@@ -33,12 +33,14 @@ export function buildWorld(scene, opts = {}) {
   const rng = new RNG(1234);
 
   // ---------------- 野餐區（左側斜坡，步道與草坪中央之間）----------------
+  // 照片左下：沿步道右側密集的野餐人群（位置由照片配準）
   const picnicZones = [
-    { z0: 8, z1: 52, n: 13, x0: 0.5, x1: 17 },
-    { z0: -22, z1: 8, n: 9, x0: 0.5, x1: 14 },
-    { z0: -58, z1: -22, n: 6, x0: 0.5, x1: 12 },
-    { z0: -96, z1: -60, n: 7, x0: 0.5, x1: 16 },
-    { z0: -150, z1: -100, n: 3, x0: 1, x1: 10 },
+    { z0: 20, z1: 45, n: 22, x0: 0.2, x1: 12, gap: 2.7 },
+    { z0: 0, z1: 20, n: 14, x0: 0.2, x1: 10, gap: 2.9 },
+    { z0: -24, z1: 0, n: 7, x0: 0.5, x1: 12, gap: 4.2 },
+    { z0: -48, z1: -24, n: 4, x0: 1, x1: 12, gap: 4.6 },
+    { z0: -95, z1: -55, n: 7, x0: 0.5, x1: 14, gap: 4.6 },
+    { z0: -150, z1: -100, n: 2, x0: 1, x1: 10, gap: 5 },
   ];
   const blanketSpots = [];
   for (const zn of picnicZones) {
@@ -48,34 +50,34 @@ export function buildWorld(scene, opts = {}) {
       const z = rng.range(zn.z0, zn.z1);
       const x = terrain.lawnLeft(z) + rng.range(zn.x0, zn.x1);
       if (terrain.bunkerWeight(x, z) > 0 || terrain.distToPath(x, z) < 3) continue;
-      if (blanketSpots.some((b) => Math.hypot(b.x - x, b.z - z) < 4.6)) continue;
+      if (blanketSpots.some((b) => Math.hypot(b.x - x, b.z - z) < zn.gap)) continue;
       blanketSpots.push({ x, z });
       made++;
     }
   }
   // 草坪右側也有少數幾組
-  for (const [x, z] of [[21, -30], [18, -12], [23, -88], [12, -128]]) blanketSpots.push({ x, z });
+  for (const [x, z] of [[22, -36], [19, -10], [21, -90], [12, -128]]) blanketSpots.push({ x, z });
 
   // 帳篷（依照片：前景棕色圓頂、左側遠處白色與藍色帳篷、白色遮陽棚）
   const tents = [
-    { x: terrain.lawnLeft(30) + 9.5, z: 31, ry: 0.4, color: '#6e4b3a', size: 1.0 },
-    { x: terrain.lawnLeft(-64) + 6, z: -64, ry: -0.3, color: '#f2f2ee', size: 0.9 },
-    { x: terrain.lawnLeft(-60) + 2.5, z: -59, ry: 0.2, color: '#2f86c9', size: 0.8 },
-    { x: terrain.lawnLeft(-90) + 5, z: -90, ry: 0.1, color: '#e9e9e4', size: 0.9 },
+    { x: -6.8, z: 30.4, ry: 0.4, color: '#6e4b3a', size: 1.0 },
+    { x: -14, z: -66, ry: -0.3, color: '#f2f2ee', size: 0.9 },
+    { x: -20.5, z: -61, ry: 0.2, color: '#2f86c9', size: 0.8 },
+    { x: -12, z: -88, ry: 0.1, color: '#e9e9e4', size: 0.9 },
   ];
   for (const t of tents) {
     props.addDomeTent(t.x, t.z, t.ry, t.color, t.size);
     for (let i = blanketSpots.length - 1; i >= 0; i--) if (Math.hypot(blanketSpots[i].x - t.x, blanketSpots[i].z - t.z) < 3.4) blanketSpots.splice(i, 1);
   }
-  props.addCanopy(terrain.lawnLeft(-80) + 3, -80, 0.2);
-  crowd.obstacles.push({ x: terrain.lawnLeft(-80) + 3, z: -80, r: 2.2 });
+  props.addCanopy(-17, -76, 0.2);
+  crowd.obstacles.push({ x: -17, z: -76, r: 2.2 });
 
   let picnicPeople = 0;
   blanketSpots.forEach((spot, i) => {
     const w = rng.range(1.6, 2.3), h = rng.range(1.5, 2.1);
     const rot = rng.range(-0.6, 0.6);
     const b = props.addBlanket(spot.x, spot.z, rot, w, h, i);
-    const n = rng.int(2, 6);
+    const n = spot.z > 0 ? rng.int(3, 7) : rng.int(2, 6);
     const members = [];
     const kids = rng.chance(0.55) ? rng.int(1, 2) : 0;
     for (let k = 0; k < n; k++) members.push(crowd.createPerson({ child: k >= n - kids && n > 2 }));
@@ -94,11 +96,11 @@ export function buildWorld(scene, opts = {}) {
   });
 
   // ---------------- 大顆充氣足球（照片前景）----------------
-  const giant = props.addSoccerBall(-4, 33, { radius: 0.62, mass: 1.1, restitution: 0.55, rolling: 0.06, cd: 0.47, kind: 'giant' });
+  const giant = props.addSoccerBall(0.6, 28.8, { radius: 0.62, mass: 1.1, restitution: 0.55, rolling: 0.06, cd: 0.47, kind: 'giant' });
   {
     const kids = [crowd.createPerson({ child: true, height: 1.0 }), crowd.createPerson({ child: true, height: 1.1 }), crowd.createPerson({ child: true, height: 1.25 })];
     const adults = [crowd.createPerson({ female: true }), crowd.createPerson({ female: false })];
-    crowd.addGroup(new GiantBallGroup(crowd, kids, adults, giant, { x: -4, z: 33 }, rng));
+    crowd.addGroup(new GiantBallGroup(crowd, kids, adults, giant, { x: 0.6, z: 28.8 }, rng));
   }
   {
     const giant2 = props.addSoccerBall(9, -40, { radius: 0.62, mass: 1.1, restitution: 0.55, rolling: 0.06, cd: 0.47, kind: 'giant' });
@@ -170,26 +172,26 @@ export function buildWorld(scene, opts = {}) {
 
   // ---------------- 右側紅土區：長椅、白色樁 ----------------
   const benches = [
-    props.addBench(terrain.lawnRight(-20) + 9, -20, -Math.PI / 2 - 0.2),
-    props.addBench(terrain.lawnRight(-46) + 6, -46, -Math.PI / 2 + 0.1),
-    props.addBench(terrain.lawnRight(10) + 7, 10, -Math.PI / 2),
+    props.addBench(45.1, -4.4, -Math.PI / 2 - 0.3),
+    props.addBench(41.5, -12, -Math.PI / 2 + 0.1),
+    props.addBench(39, -46, -Math.PI / 2),
   ];
   benches.forEach((b, i) => {
     const members = [];
     for (let k = 0; k < (i === 1 ? 1 : 2); k++) members.push(crowd.createPerson({}));
     crowd.addGroup(new BenchGroup(crowd, members, b, rng));
   });
-  props.addPost(terrain.lawnRight(-38) + 1.5, -38);
+  props.addPost(33, -5.1);
   props.addPost(terrain.lawnRight(-120) + 1.5, -120);
 
   // 綠色角錐（照片中散落在草坪上）
-  for (const [x, z] of [[11, -4], [-12, -42], [21, -60], [2, -96]]) props.addCone(x, z);
+  for (const [x, z] of [[14.8, -7.9], [-8, -40], [16, -66], [2, -96]]) props.addCone(x, z);
 
   // ---------------- 樹上的巨大眼球 ----------------
   for (const a of veg.eyeAnchors) {
     const anchor = new THREE.Vector3(a.x, a.y, a.z);
-    if (a.pair) { props.addEyeBalloon(anchor, -a.pair); props.addEyeBalloon(anchor, a.pair); }
-    else props.addEyeBalloon(anchor, 0);
+    if (a.pair) { props.addEyeBalloon(anchor, -a.pair, a.look); props.addEyeBalloon(anchor, a.pair, a.look); }
+    else props.addEyeBalloon(anchor, 0, a.look);
   }
 
   props.finalize();

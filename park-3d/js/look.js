@@ -6,6 +6,8 @@ import * as THREE from 'three';
 // ==================================================================
 export const LOOK = {
   exposure: 1.28,
+  sunAzim: 180, // 太陽方位角（度，從 +X 往 +Z 量）。照片中人影往右延伸 → 太陽在左方（西）
+  sunElev: 18,
   sunPower: 1.7,
   sunWarm: [1.0, 0.7, 0.28], // 太陽仰角 17° 時的陽光色（金黃）
   hemiPower: 1.4,
@@ -13,7 +15,7 @@ export const LOOK = {
   hemiGround: [0.5, 0.45, 0.22],
   fog: [0.62, 0.74, 0.88],
   fogDensity: 0.0007,
-  zenith: [0.015, 0.22, 0.8],
+  zenith: [0.04, 0.36, 0.86],
   horizon: [0.24, 0.6, 0.9],
   cloud: [0.72, 0.88],
   cloudLit: [1.05, 1.04, 1.02],
@@ -30,10 +32,38 @@ export const LOOK = {
   woodTint: [1, 1, 1],
   grade: {
     lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1],
-    sat: 1.18, contrast: 0.25, vignette: 0.28,
+    sat: 1.18, contrast: 0.25, vignette: 0.0, // 照片沒有暗角
     shadowTint: [0, 0, 0.015], highTint: [0, 0, 0],
   },
+  // 逐通道色調曲線（輸入 → 輸出，0–255），以 16×9 方格的 RGB 分佈與照片逐格比對擬合
+  curve: {
+    knots: [0.0, 15.0, 30.0, 45.0, 60.0, 75.0, 90.0, 105.0, 120.0, 135.0, 150.0, 165.0, 180.0, 195.0, 210.0, 225.0, 240.0, 255.0],
+    r: [33.8, 47.8, 66.2, 76.3, 89.5, 106.6, 117.1, 127.6, 131.2, 134.7, 138.4, 141.1, 143.2, 160.1, 181.5, 199.2, 213.4, 231.2],
+    g: [37.4, 45.9, 59.7, 72.8, 80.0, 88.3, 99.9, 113.8, 136.1, 140.8, 143.2, 148.8, 157.2, 179.3, 200.7, 213.4, 222.4, 231.3],
+    b: [0.0, 34.0, 57.1, 67.7, 76.0, 91.3, 102.8, 110.2, 116.5, 123.7, 133.0, 141.3, 145.0, 146.2, 155.6, 181.2, 225.8, 255.0],
+  },
 };
+
+export function curveTexture(curve) {
+  const data = new Uint8Array(256 * 4);
+  const interp = (ys, x) => {
+    const k = curve.knots;
+    let i = 0;
+    while (i < k.length - 2 && x > k[i + 1]) i++;
+    const t = Math.min(1, Math.max(0, (x - k[i]) / (k[i + 1] - k[i])));
+    return ys[i] + (ys[i + 1] - ys[i]) * t;
+  };
+  for (let x = 0; x < 256; x++) {
+    data[x * 4] = Math.round(interp(curve.r, x));
+    data[x * 4 + 1] = Math.round(interp(curve.g, x));
+    data[x * 4 + 2] = Math.round(interp(curve.b, x));
+    data[x * 4 + 3] = 255;
+  }
+  const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.magFilter = t.minFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
 
 // 在 OutputPass（色調映射 + sRGB）之後，於顯示空間調色
 export const GradeShader = {
@@ -48,6 +78,8 @@ export const GradeShader = {
     uShadowTint: { value: new THREE.Vector3() },
     uHighTint: { value: new THREE.Vector3() },
     uAspect: { value: 1.78 },
+    uCurve: { value: null },
+    uCurveOn: { value: 1 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -57,6 +89,7 @@ export const GradeShader = {
     uniform vec3 uLift; uniform vec3 uGamma; uniform vec3 uGain;
     uniform float uSat; uniform float uContrast; uniform float uVignette; uniform float uAspect;
     uniform vec3 uShadowTint; uniform vec3 uHighTint;
+    uniform sampler2D uCurve; uniform float uCurveOn;
     varying vec2 vUv;
     void main(){
       vec3 c = texture2D(tDiffuse, vUv).rgb;
@@ -74,7 +107,12 @@ export const GradeShader = {
       // 暗角
       vec2 d = vUv - 0.5; d.x *= uAspect;
       c *= 1.0 - uVignette * smoothstep(0.45, 1.15, length(d));
-      gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+      c = clamp(c, 0.0, 1.0);
+      // 擬合出的色調曲線（最後一步）
+      vec3 cc = c * (255.0 / 256.0) + 0.5 / 256.0;
+      vec3 curved = vec3(texture2D(uCurve, vec2(cc.r, 0.5)).r, texture2D(uCurve, vec2(cc.g, 0.5)).g, texture2D(uCurve, vec2(cc.b, 0.5)).b);
+      c = mix(c, curved, uCurveOn);
+      gl_FragColor = vec4(c, 1.0);
     }`,
 };
 
@@ -117,6 +155,8 @@ export function applyLook(look, ctx, patch) {
     v3(U.uLift.value, g.lift); v3(U.uGamma.value, g.gamma); v3(U.uGain.value, g.gain);
     U.uSat.value = g.sat; U.uContrast.value = g.contrast; U.uVignette.value = g.vignette;
     v3(U.uShadowTint.value, g.shadowTint); v3(U.uHighTint.value, g.highTint);
+    if (look.curve) { if (U.uCurve.value) U.uCurve.value.dispose(); U.uCurve.value = curveTexture(look.curve); }
+    U.uCurveOn.value = look.curve && look.curveOn !== false ? 1 : 0;
   }
   ctx.updateSun();
 }

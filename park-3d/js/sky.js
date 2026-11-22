@@ -1,5 +1,16 @@
 import * as THREE from 'three';
 import { makeNoise2D, fbm } from './noise.js';
+import { CLOUD_MASK } from './cloudmask.js';
+
+function maskTexture() {
+  const bin = atob(CLOUD_MASK.data);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const t = new THREE.DataTexture(arr, CLOUD_MASK.w, CLOUD_MASK.h, THREE.RedFormat, THREE.UnsignedByteType);
+  t.magFilter = t.minFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  return t;
+}
 
 // 天空穹頂：藍天漸層 + 程序化雲層 + 太陽光暈
 export function createSky(sunDir) {
@@ -12,6 +23,10 @@ export function createSky(sunDir) {
     uCloud: { value: new THREE.Vector2(0.64, 0.86) },
     uCloudLit: { value: new THREE.Color(1.0, 0.98, 0.95) },
     uCloudShade: { value: new THREE.Color(0.70, 0.76, 0.86) },
+    // 照片視角的雲量分佈：方向 → 照片畫面座標 → 雲量
+    uMask: { value: maskTexture() },
+    uPhotoVP: { value: new THREE.Matrix4() },
+    uMaskOn: { value: 1 },
   };
   const mat = new THREE.ShaderMaterial({
     uniforms,
@@ -28,6 +43,7 @@ export function createSky(sunDir) {
     fragmentShader: /* glsl */ `
       uniform vec3 uSunDir; uniform float uTime; uniform vec3 uZenith; uniform vec3 uHorizon; uniform vec2 uCloudShift;
       uniform vec2 uCloud; uniform vec3 uCloudLit; uniform vec3 uCloudShade;
+      uniform sampler2D uMask; uniform mat4 uPhotoVP; uniform float uMaskOn;
       varying vec3 vDir;
       float h21(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
       float vn(vec2 p){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);
@@ -50,6 +66,16 @@ export function createSky(sunDir) {
           float detail = fbm(q * 2.3 + vec2(uTime * 0.01, 0.0));
           float c = band * 0.75 + detail * 0.45;
           float cov = smoothstep(uCloud.x, uCloud.y, c) * smoothstep(0.02, 0.35, d.y + band * 0.2);
+          // 照片視角內：依照片的雲量分佈放置雲（細節仍來自噪聲）
+          vec4 cp = uPhotoVP * vec4(d, 0.0);
+          if (cp.w > 0.0 && uMaskOn > 0.5) {
+            vec2 puv = cp.xy / cp.w * 0.5 + 0.5;
+            float edge = smoothstep(-0.02, 0.01, min(min(puv.x, 1.0 - puv.x), min(puv.y, 1.0 - puv.y)));
+            float m = texture2D(uMask, clamp(puv, 0.0, 1.0)).r;
+            float mc = smoothstep(0.25, 0.75, m + (detail - 0.5) * 0.45);
+            cov = mix(cov, mc, edge);
+            c = mix(c, 0.6 + m * 0.35, edge);
+          }
           // 高空卷雲：細長絲狀
           float cir = fbm(vec2(q.x * 0.8, q.y * 4.0) + 7.3);
           cov = max(cov, smoothstep(0.66, 0.88, cir) * 0.4);
