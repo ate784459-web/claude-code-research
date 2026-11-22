@@ -40,7 +40,8 @@ three.js（r160）透過 import map 從 jsDelivr CDN 載入，其餘都在本資
 | `js/people.js` | 程序化人體（InstancedMesh，12 種部件）、正向運動學骨架、程序化動畫、行為 AI |
 | `js/props.js` | 野餐墊、帳篷、遮陽棚、推車、嬰兒車、冰桶、長椅、角錐、足球 / 大充氣球、飛盤、眼球氣球 |
 | `js/world.js` | 依照片佈置整個場景 |
-| `js/main.js` | 渲染器、光照、陰影相機、操作與 UI |
+| `js/look.js` | 色調設定與調色後製（lift / gamma / gain、S 曲線、飽和度、分離色調、暗角）。數值是逐區比對照片色彩統計（天空、草坪亮部 / 暗部、左右樹冠、紅土）調出來的 |
+| `js/main.js` | 渲染器、後製管線（HDR → ACES → 調色）、光照、陰影相機、操作與 UI |
 
 ### 物理模擬（`physics.js`，固定步長 1/120 秒）
 

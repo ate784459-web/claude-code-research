@@ -238,7 +238,7 @@ export class Vegetation {
     add({ x: 36, z: -34, type: 'broad', size: 1.1, trunkH: 4.6, minD: 8, eyes: [{ dx: -4.6, dz: 2.2 }, { dx: -4.9, dz: -1.4 }] });
     add({ x: 38, z: -66, type: 'broad', size: 1.0, trunkH: 4.8, minD: 8, eyes: [{ dx: -4.2, dz: 0.4, pair: 1.25 }] });
     // 前景右下的大樹冠
-    add({ x: 22, z: 47, type: 'broad', size: 1.2, trunkH: 1.8, minD: 10, tint: 0.12 });
+    add({ x: 22, z: 47, type: 'broad', size: 1.2, trunkH: 1.8, minD: 10, tint: 0, side: 'R', hero: true });
     // 遠方坡頂：棕櫚、木棉、孤立大樹
     add({ x: 0.5, z: -300, type: 'palm', size: 1.1, minD: 4 });
     add({ x: -24, z: -298, type: 'bare', size: 1.15, minD: 6 });
@@ -274,7 +274,7 @@ export class Vegetation {
       const depth = Math.pow(rng.next(), 1.3) * 70;
       const x = L - 4.5 - depth;
       const near = depth < 22;
-      return { x, z, type: rng.chance(0.02) ? 'bare' : 'broad', size: rng.range(0.9, 1.25), minD: near ? 7 : 9, far: !near, trunkH: rng.range(2.4, 4.4) };
+      return { x, z, type: rng.chance(0.02) ? 'bare' : 'broad', size: rng.range(0.9, 1.25), minD: near ? 7 : 9, far: !near, trunkH: rng.range(2.4, 4.4), side: 'L' };
     });
     // 步道與草坪之間零星的樹（照片左下的細長樹幹）
     tryArea(Math.round(10 * Q), () => {
@@ -287,14 +287,14 @@ export class Vegetation {
       const z = rng.range(-250, 120);
       const R = T.lawnRight(z);
       const x = R + rng.range(2.5, 24);
-      return { x, z, type: 'broad', size: rng.range(0.85, 1.15), minD: 7.5, trunkH: rng.range(3.6, 5.6), tint: rng.chance(0.35) ? rng.range(0.2, 0.6) : 0 };
+      return { x, z, type: 'broad', size: rng.range(0.85, 1.15), minD: 7.5, trunkH: rng.range(4.8, 7), tint: rng.chance(0.4) ? rng.range(0.2, 0.6) : 0, side: 'R' };
     });
     // 右側後方密林
     tryArea(Math.round(150 * Q), () => {
       const z = rng.range(-320, 160);
       const R = T.lawnRight(z);
-      const x = R + 24 + Math.pow(rng.next(), 1.4) * 60;
-      return { x, z, type: rng.chance(0.02) ? 'bare' : 'broad', size: rng.range(0.9, 1.3), minD: 8.5, far: true, trunkH: rng.range(3, 5), tint: rng.chance(0.25) ? rng.range(0.2, 0.5) : 0 };
+      const x = R + 38 + Math.pow(rng.next(), 1.4) * 50;
+      return { x, z, type: rng.chance(0.02) ? 'bare' : 'broad', size: rng.range(0.9, 1.3), minD: 8.5, far: true, trunkH: rng.range(3, 5), tint: rng.chance(0.3) ? rng.range(0.2, 0.5) : 0, side: 'R' };
     });
     // 坡頂後方樹林
     tryArea(Math.round(50 * Q), () => {
@@ -370,6 +370,7 @@ export class Vegetation {
     frondMesh.customDepthMaterial = windDepthMaterial(U, frondMat.map, true);
 
     this.group.add(woodMesh, coreMesh, leafMesh, frondMesh);
+    this.materials = { wood: woodMat, leaf: leafMat, core: coreMat, frond: frondMat };
     this.stats = { trees: specs.length, leafVerts: leaves.vcount, woodVerts: wood.vcount };
     return this.group;
   }
@@ -429,15 +430,20 @@ export class Vegetation {
       }
     }
 
-    const baseHue = rng.range(0.2, 0.26);
+    // 照片中左側樹林偏暗、偏橄欖綠；右側向陽的樹偏黃綠、帶秋色
+    const side = s.side ?? (base.x > 0 ? 'R' : 'L');
+    const pal = side === 'R'
+      ? { h: [0.14, 0.19], s: [0.65, 0.85], l: [0.44, 0.6] }
+      : { h: [0.21, 0.27], s: [0.3, 0.45], l: [0.18, 0.3] };
+    const baseHue = rng.range(pal.h[0], pal.h[1]);
     const tint = s.tint ?? 0;
     const nrm = new THREE.Vector3(), ax = new THREE.Vector3(), ay = new THREE.Vector3(), p = new THREE.Vector3();
     const q = new THREE.Quaternion(), e = new THREE.Euler();
     const sunSide = new THREE.Vector3(0.6, 0.45, 0.65).normalize();
     for (const k of clusters) {
-      const coreCol = new THREE.Color().setHSL(baseHue, 0.5, 0.09 + rng.next() * 0.04);
+      const coreCol = new THREE.Color().setHSL(baseHue, 0.45, (s.hero ? 0.16 : 0.08) + rng.next() * 0.04);
       cores.blob(k.c, k.r * 0.55, 0.82, coreCol, 0.75, rng, far ? 0 : 1);
-      const cards = Math.round(far ? rng.range(10, 13) : rng.range(18, 24));
+      const cards = Math.round((far ? rng.range(10, 13) : rng.range(18, 24)) * (s.hero ? 2.2 : 1));
       const autumn = rng.chance(tint);
       for (let i = 0; i < cards; i++) {
         const u = rng.next() * 2 - 1, phi = rng.next() * Math.PI * 2;
@@ -455,7 +461,7 @@ export class Vegetation {
         ay.set(0, sz, 0).applyQuaternion(q);
         const col = new THREE.Color();
         if (autumn) col.setHSL(rng.range(0.05, 0.1), rng.range(0.55, 0.75), rng.range(0.36, 0.5));
-        else col.setHSL(baseHue + rng.range(-0.025, 0.035), rng.range(0.5, 0.7), rng.range(0.3, 0.46));
+        else col.setHSL(baseHue + rng.range(-0.025, 0.03), rng.range(pal.s[0], pal.s[1]), rng.range(pal.l[0], pal.l[1]));
         // 外層與向陽面較亮
         const outward = clamp(p.distanceTo(cc) / (CR + 0.01), 0.3, 1.15);
         const sunny = 0.85 + 0.25 * Math.max(0, nrm.dot(sunSide));

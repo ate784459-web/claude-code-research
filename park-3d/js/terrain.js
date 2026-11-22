@@ -29,6 +29,8 @@ float gNoise(vec2 p){
 }
 float gFbm(vec2 p){ float s=0.0, a=0.5; for(int i=0;i<4;i++){ s+=a*gNoise(p); p=p*2.03+vec2(17.1,5.3); a*=0.5; } return s; }
 
+uniform vec3 uLawnA; uniform vec3 uLawnB; uniform vec3 uRoughA; uniform vec3 uRoughB;
+uniform vec3 uDirtA; uniform vec3 uDirtB; uniform vec3 uSandC;
 // m.r = 修剪草坪, m.g = 紅土, m.b = 沙, m.a = 步道/磨損
 vec3 groundColor(vec2 wp, vec4 m, float detail){
   float n1 = gFbm(wp*0.025);
@@ -36,9 +38,7 @@ vec3 groundColor(vec2 wp, vec4 m, float detail){
   float n3 = gNoise(wp*2.7);
   float n4 = gNoise(wp*11.0);
   // 草坪：黃綠色，夕陽下偏暖
-  vec3 lawnA = vec3(0.175, 0.300, 0.028);
-  vec3 lawnB = vec3(0.300, 0.360, 0.045);
-  vec3 lawn = mix(lawnA, lawnB, smoothstep(0.30, 0.75, n1));
+  vec3 lawn = mix(uLawnA, uLawnB, smoothstep(0.30, 0.75, n1));
   // 割草機條紋（沿著球道方向）
   float s = fract(wp.x / 7.5 + wp.y * 0.006 + n2*0.08);
   float stripe = smoothstep(0.42, 0.5, s) - smoothstep(0.92, 1.0, s);
@@ -47,19 +47,19 @@ vec3 groundColor(vec2 wp, vec4 m, float detail){
   lawn *= mix(1.0, 0.9 + 0.2*n3, detail);
   lawn *= mix(1.0, 0.9 + 0.2*n4, detail);
   // 長草區：較暗較黃
-  vec3 rough = mix(vec3(0.13,0.20,0.035), vec3(0.24,0.25,0.06), smoothstep(0.2,0.8,n2*0.6+n1*0.6));
+  vec3 rough = mix(uRoughA, uRoughB, smoothstep(0.2,0.8,n2*0.6+n1*0.6));
   rough *= mix(1.0, 0.8 + 0.4*n3, detail);
   float lawnW = smoothstep(0.35, 0.65, m.r + (n3-0.5)*0.25);
   vec3 grass = mix(rough, lawn, lawnW);
   // 紅土 + 落葉
-  vec3 dirt = mix(vec3(0.30,0.115,0.040), vec3(0.42,0.20,0.075), smoothstep(0.2,0.8,n2));
-  dirt = mix(dirt, vec3(0.36,0.25,0.10), smoothstep(0.55,0.9,n3)*0.6);
+  vec3 dirt = mix(uDirtA, uDirtB, smoothstep(0.2,0.8,n2));
+  dirt = mix(dirt, uDirtB * vec3(0.85, 1.25, 1.3), smoothstep(0.55,0.9,n3)*0.6);
   dirt *= mix(1.0, 0.75 + 0.45*n4, detail);
   float dirtW = smoothstep(0.3, 0.7, m.g + (n2-0.5)*0.5 + (n4-0.5)*0.15*detail);
   // 草地與紅土交界有稀疏草
   vec3 c = mix(grass, dirt, dirtW);
   // 沙坑
-  vec3 sand = vec3(0.62,0.55,0.43) * (0.93 + 0.1*n3) * mix(1.0, 0.92 + 0.12*n4, detail);
+  vec3 sand = uSandC * (0.93 + 0.1*n3) * mix(1.0, 0.92 + 0.12*n4, detail);
   float sandW = smoothstep(0.42, 0.58, m.b + (n3-0.5)*0.18);
   c = mix(c, sand, sandW);
   // 步道邊緣磨損
@@ -291,6 +291,14 @@ export class Terrain {
       uWorldMin: { value: new THREE.Vector2(WORLD.minX, WORLD.minZ) },
       uWorldSize: { value: new THREE.Vector2(WORLD.maxX - WORLD.minX, WORLD.maxZ - WORLD.minZ) },
       uGridSize: { value: new THREE.Vector2(this.nx, this.nz) },
+      // 地表顏色（線性空間反照率），可在執行時調色
+      uLawnA: { value: new THREE.Color(0.175, 0.300, 0.028) },
+      uLawnB: { value: new THREE.Color(0.300, 0.360, 0.045) },
+      uRoughA: { value: new THREE.Color(0.13, 0.20, 0.035) },
+      uRoughB: { value: new THREE.Color(0.24, 0.25, 0.06) },
+      uDirtA: { value: new THREE.Color(0.30, 0.115, 0.040) },
+      uDirtB: { value: new THREE.Color(0.42, 0.20, 0.075) },
+      uSandC: { value: new THREE.Color(0.62, 0.55, 0.43) },
     };
     return this.uniforms;
   }

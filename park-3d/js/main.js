@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { LOOK, GradeShader, applyLook } from './look.js';
 import { createSky, createDistantHills } from './sky.js';
 import { buildWorld } from './world.js';
 import { clamp, lerp } from './noise.js';
@@ -46,6 +51,7 @@ async function init() {
   sun.shadow.camera.far = 1200;
   scene.add(sun, sun.target);
   const hemi = new THREE.HemisphereLight(0x9cc4ff, 0x5a5a2a, 0.8);
+  const look = LOOK;
   scene.add(hemi);
 
   const sky = createSky(sunDir);
@@ -58,13 +64,20 @@ async function init() {
     // azimuth 從 +X 往 +Z 量
     sunDir.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).normalize();
     sky.uniforms.uSunDir.value.copy(sunDir);
+    // 仰角越低越暖、越暗；以 17° 時的照片色調為基準
     const warm = 1 - clamp((sunElev - 5) / 45, 0, 1);
-    sun.color.setRGB(1.0, lerp(0.95, 0.78, warm), lerp(0.88, 0.55, warm));
-    sun.intensity = lerp(1.8, 4.2, clamp((sunElev - 2) / 25, 0, 1));
-    hemi.intensity = lerp(0.5, 0.9, clamp(sunElev / 40, 0, 1));
-    hemi.color.setRGB(lerp(0.75, 0.6, warm), lerp(0.8, 0.76, warm), 1.0);
+    const w0 = 1 - clamp((17 - 5) / 45, 0, 1);
+    const k = clamp(warm / w0, 0, 1.4);
+    const sw = look.sunWarm;
+    sun.color.setRGB(lerp(1.0, sw[0], k), lerp(0.97, sw[1], k), lerp(0.93, sw[2], k));
+    sun.intensity = lerp(1.9, 3.3, clamp((sunElev - 2) / 15, 0, 1)) * look.sunPower;
+    hemi.intensity = lerp(0.5, 0.9, clamp(sunElev / 40, 0, 1)) * look.hemiPower;
+    hemi.color.setRGB(...look.hemiSky);
+    hemi.groundColor.setRGB(...look.hemiGround);
+    // 自動曝光：像相機一樣，太陽升高時收一點曝光，維持照片的明暗
+    const ref = Math.sin(THREE.MathUtils.degToRad(17));
+    renderer.toneMappingExposure = look.exposure * clamp(Math.pow(ref / Math.max(0.05, Math.sin(el)), 0.6), 0.55, 1.3);
   }
-  updateSun();
 
   status('生成地形、樹木與人群…');
   await nextFrame();
@@ -72,6 +85,18 @@ async function init() {
   const world = buildWorld(scene, { quality: QUALITY });
   console.info(`world built in ${Math.round(performance.now() - tBuild)} ms`, world.stats);
   const { terrain, physics, crowd, props, veg, grass, birds } = world;
+
+  // ---- 後製：HDR → 色調映射 → 調色 ----
+  const pr = renderer.getPixelRatio();
+  const rt = new THREE.WebGLRenderTarget(innerWidth * pr, innerHeight * pr, { type: THREE.HalfFloatType, samples: QUALITY < 0.8 ? 0 : 4 });
+  const composer = new EffectComposer(renderer, rt);
+  composer.addPass(new RenderPass(scene, camera));
+  composer.addPass(new OutputPass());
+  const grade = new ShaderPass(GradeShader);
+  composer.addPass(grade);
+  grade.uniforms.uAspect.value = innerWidth / innerHeight;
+  const lookCtx = { renderer, scene, sky, terrainU: terrain.uniforms, veg, grade, updateSun };
+  applyLook(look, lookCtx);
 
   // ---- 控制 ----
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -146,6 +171,8 @@ async function init() {
   // ---- 視窗 ----
   function resize() {
     renderer.setSize(innerWidth, innerHeight, false);
+    composer.setSize(innerWidth, innerHeight);
+    grade.uniforms.uAspect.value = innerWidth / innerHeight;
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
   }
@@ -211,7 +238,7 @@ async function init() {
     if (camera.position.y < gy) camera.position.y = gy;
     sky.mesh.position.copy(camera.position);
     updateShadowFrustum();
-    renderer.render(scene, camera);
+    composer.render();
 
     fpsAcc += dt; fpsN++; fpsT += dt;
     if (fpsT > 0.5) {
@@ -222,7 +249,7 @@ async function init() {
     requestAnimationFrame(frame);
   }
   frame();
-  window.__park = { scene, camera, controls, world, renderer, setPhotoView };
+  window.__park = { scene, camera, controls, world, renderer, setPhotoView, look, tune: (patch) => applyLook(look, lookCtx, patch) };
 }
 
 init().catch((err) => {
