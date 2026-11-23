@@ -80,7 +80,7 @@ export function buildWorld(scene, opts = {}) {
     const n = spot.z > 0 ? rng.int(3, 7) : rng.int(2, 6);
     const members = [];
     const kids = rng.chance(0.55) ? rng.int(1, 2) : 0;
-    for (let k = 0; k < n; k++) members.push(crowd.createPerson({ child: k >= n - kids && n > 2 }));
+    for (let k = 0; k < n; k++) members.push(crowd.createPerson({ child: k >= n - kids && n > 2, softSkirt: true }));
     const g = crowd.addGroup(new PicnicGroup(crowd, b, members, rng));
     picnicPeople += n;
     // 坐的位置壓住布料
@@ -196,7 +196,7 @@ export function buildWorld(scene, opts = {}) {
 
   props.finalize();
   scene.add(props.group);
-  scene.add(crowd.build());
+  scene.add(crowd.build({ detail: Q >= 0.8 ? 1 : 0 }));
 
   // ---------------- 鳥 ----------------
   const birds = createBirds(scene, 7);

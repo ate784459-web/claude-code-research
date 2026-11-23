@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RNG, clamp, lerp, smoothstep } from './noise.js';
+import { buildBodyGeometry, makeFaceTexture, injectBodySkinning, BIND, B, NB, BONE_TEXELS } from './body.js';
+import { SkirtSystem } from './skirt.js';
 
 // ==================================================================
-// 人群系統：程序化人體（全部由基本幾何組成，以 InstancedMesh 繪製）、
-// 正向運動學骨架、步態 / 坐姿 / 踢球 / 跌倒等程序化動畫，
+// 人群系統：程序化人體（連續的蒙皮網格，GPU instancing 一次畫完，見 body.js）、
+// 骨架（正向運動學 + 腳的兩骨 IK）、步態 / 坐姿 / 踢球 / 跌倒等程序化動畫、呼吸與重心轉移、裙子布料（skirt.js），
 // 以及行為 AI（野餐、散步、步道行走、踢足球、推大球、飛盤、聊天、長椅）。
 // ==================================================================
 
@@ -13,8 +15,10 @@ const TAU = Math.PI * 2;
 const PY = 0, BP = 1, TP = 2, TY = 3, TR = 4, HP = 5, HY = 6,
   LHP = 7, LHR = 8, LK = 9, RHP = 10, RHR = 11, RK = 12,
   LSP = 13, LSR = 14, LE = 15, RSP = 16, RSR = 17, RE = 18,
-  BOB = 19, ANK = 20, PR = 21, LHT = 22, RHT = 23;
-const NP = 24;
+  BOB = 19, ANK = 20, PR = 21, LHT = 22, RHT = 23, PX = 24;
+const NP = 25;
+// 這些動作時雙腳踩地，套用腳的 IK
+const IK_MODES = new Set(['move', 'stand', 'idle', 'push', 'kick', 'throw', 'catch', 'crouch']);
 
 const SKIN = ['#f3d2b3', '#eac09b', '#e0b08a', '#d6a37c', '#c48a62', '#a86f4c', '#f0caa8'];
 const HAIR = ['#141010', '#1d1612', '#2a1d15', '#3b2a1e', '#4a3423', '#6b4a30', '#a09080'];
@@ -24,11 +28,6 @@ const BOTTOMS = ['#2b3a55', '#3d4f73', '#1e1e24', '#1e1e24', '#c9b48a', '#6d6a64
 const SHOES = ['#f2f2f2', '#1a1a1a', '#e6e1d8', '#7a4b2a', '#3a3f4a', '#ffffff'];
 const HATS = ['#efe3c8', '#f4f4f4', '#d9c39a', '#1d1d22', '#c8a774', '#e9a6b8', '#f2f0e6'];
 
-function lathe(pts, segs, zScale) {
-  const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), segs);
-  g.scale(1, 1, zScale);
-  return g;
-}
 function strip(g) {
   // 讓 merge 時屬性一致
   for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
@@ -36,33 +35,89 @@ function strip(g) {
 }
 function merge(list) { return mergeGeometries(list.map(strip)); }
 
+// 頭髮的髮絲貼圖：明暗相間的髮束條紋，底部是參差的髮尾（alpha 測試切出不整齊的邊）
+function makeHairTexture() {
+  const W = 256, H = 256;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const rng = new RNG(99);
+  g.fillStyle = 'rgb(225,225,225)';
+  g.fillRect(0, 0, W, H);
+  for (let i = 0; i < 260; i++) {
+    const x = rng.range(0, W), w = rng.range(0.6, 2.2), l = Math.round(rng.range(150, 255));
+    g.strokeStyle = `rgba(${l},${l},${l},${rng.range(0.25, 0.7)})`;
+    g.lineWidth = w;
+    g.beginPath(); g.moveTo(x, 0); g.bezierCurveTo(x + rng.range(-4, 4), H * 0.4, x + rng.range(-6, 6), H * 0.7, x + rng.range(-5, 5), H); g.stroke();
+  }
+  // 髮尾：每一小束長短不一，往下逐漸透明
+  const img = g.getImageData(0, 0, W, H);
+  const cut = new Float32Array(W);
+  let v = 0;
+  for (let x = 0; x < W; x++) { if (x % 3 === 0) v = rng.range(0.0, 0.2); cut[x] = v; }
+  for (let y = 0; y < H; y++) {
+    const fromBottom = 1 - y / H;
+    for (let x = 0; x < W; x++) {
+      const k = (y * W + x) * 4;
+      img.data[k + 3] = fromBottom < cut[x] ? 0 : 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  t.anisotropy = 4;
+  return t;
+}
+
+// 頭髮網格（頭部座標）：頭頂的髮帽 + 長髮在背後與兩側垂下的一片髮幕
+function hairCap(thetaMax) {
+  const g = new THREE.SphereGeometry(0.108, 22, 12, 0, TAU, 0, thetaMax);
+  // uv.y：頭頂 = 1、邊緣（髮際線）= 0 → 髮尾落在髮際線
+  const uv = g.attributes.uv, pos = g.attributes.position;
+  for (let i = 0; i < uv.count; i++) {
+    const y = pos.getY(i) / 0.108;
+    const th = Math.acos(clamp(y, -1, 1));
+    uv.setXY(i, uv.getX(i) * 6, 1 - th / thetaMax * 0.85);
+  }
+  g.rotateX(-0.42); g.scale(0.94, 1.1, 1.05); g.translate(0, 0.178, -0.004);
+  return g;
+}
+function hairCurtain(len) {
+  const pos = [], uv = [], idx = [];
+  const NU = 18, NV = 8;
+  for (let j = 0; j <= NV; j++) {
+    const v = j / NV;
+    for (let i = 0; i <= NU; i++) {
+      const u = i / NU;
+      const phi = (u - 0.5) * Math.PI * 1.35; // 背後為 0，往兩側延伸到耳後
+      const side = Math.abs(u - 0.5) * 2;
+      const L = len * (1 - 0.45 * side * side); // 兩側較短
+      const y = 0.215 - L * v;
+      const r = 0.105 + 0.03 * v + 0.012 * Math.sin(v * Math.PI);
+      pos.push(Math.sin(phi) * r * 0.98, y, -Math.cos(phi) * r * 1.02 - 0.012);
+      uv.push(u * 5, 1 - v);
+    }
+  }
+  for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) {
+    const a = j * (NU + 1) + i, b = a + 1, c = a + NU + 1, d = c + 1;
+    idx.push(a, c, b, b, c, d);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 function buildParts() {
-  const torso = lathe([[0.0, -0.07], [0.128, -0.07], [0.142, 0.0], [0.138, 0.12], [0.143, 0.22], [0.163, 0.34],
-    [0.176, 0.42], [0.168, 0.47], [0.12, 0.505], [0.055, 0.52], [0.0, 0.521]], 14, 0.6);
-  const pelvis = lathe([[0.0, -0.13], [0.1, -0.14], [0.145, -0.1], [0.15, -0.02], [0.14, 0.04], [0.0, 0.041]], 12, 0.7);
-  const neck = new THREE.CylinderGeometry(0.046, 0.05, 0.13, 8); neck.translate(0, 0.05, 0);
-  const skull = new THREE.SphereGeometry(0.1, 16, 12); skull.scale(0.9, 1.12, 1.0); skull.translate(0, 0.17, 0.012);
-  const nose = new THREE.ConeGeometry(0.016, 0.04, 5); nose.rotateX(Math.PI / 2); nose.translate(0, 0.16, 0.115);
-  const ears = [-1, 1].map((s) => { const e = new THREE.SphereGeometry(0.022, 6, 5); e.scale(0.5, 1, 0.8); e.translate(s * 0.09, 0.165, 0.0); return e; });
-  const head = merge([neck, skull, nose, ...ears]);
-  const cap = new THREE.SphereGeometry(0.108, 16, 10, 0, TAU, 0, Math.PI * 0.55);
-  cap.rotateX(-0.42); cap.scale(0.94, 1.1, 1.05); cap.translate(0, 0.178, -0.004);
-  const hairShort = cap;
-  const back = new THREE.CylinderGeometry(0.098, 0.12, 0.3, 14, 1, false, Math.PI / 2, Math.PI);
-  back.translate(0, 0.07, -0.012);
-  const hairLong = merge([cap.clone(), back]);
+  const hairShort = hairCap(Math.PI * 0.56);
+  const hairLong = merge([hairCap(Math.PI * 0.6), hairCurtain(0.36)]);
   const brim = new THREE.CylinderGeometry(0.2, 0.21, 0.012, 22); brim.translate(0, 0.25, 0.01);
   const crown = new THREE.CylinderGeometry(0.1, 0.113, 0.095, 16); crown.translate(0, 0.297, 0.0);
   const hat = merge([brim, crown]);
-  const upperArm = new THREE.CapsuleGeometry(0.047, 0.22, 3, 8); upperArm.translate(0, -0.14, 0);
-  const fa = new THREE.CapsuleGeometry(0.038, 0.2, 3, 8); fa.translate(0, -0.12, 0);
-  const hand = new THREE.SphereGeometry(0.043, 8, 6); hand.scale(0.75, 1.25, 0.55); hand.translate(0, -0.29, 0.005);
-  const forearm = merge([fa, hand]);
-  const thigh = new THREE.CapsuleGeometry(0.068, 0.31, 3, 10); thigh.translate(0, -0.21, 0);
-  const shin = new THREE.CapsuleGeometry(0.05, 0.33, 3, 8); shin.translate(0, -0.205, 0);
-  const foot = new THREE.BoxGeometry(0.088, 0.07, 0.23); foot.translate(0, -0.04, 0.05);
-  const skirt = lathe([[0.148, 0.03], [0.19, -0.15], [0.25, -0.42], [0.0, -0.42]], 16, 0.8);
-  return { torso, pelvis, head, hairShort, hairLong, hat, upperArm, forearm, thigh, shin, foot, skirt };
+  return { hairShort, hairLong, hat };
 }
 
 // ------------------------------------------------------------------
@@ -70,10 +125,15 @@ function buildParts() {
 // ------------------------------------------------------------------
 function poseStand(o, t, seed) {
   o.fill(0);
-  o[PY] = 0.92; o[LK] = 0.04; o[RK] = 0.04; o[LHP] = 0.02; o[RHP] = 0.02;
+  o[PY] = 0.92; o[LHP] = 0.02; o[RHP] = 0.02;
   o[LSR] = 0.08; o[RSR] = 0.08; o[LE] = 0.16; o[RE] = 0.16;
-  const s = Math.sin(t * 0.7 + seed);
-  o[TR] = 0.02 * s; o[PR] = -0.025 * s; o[LHR] = 0.035 + 0.025 * s; o[RHR] = 0.035 - 0.025 * s;
+  // 重心輪流落在一條腿上：骨盆往承重腳側移、承重側的髖抬高、肩膀反向傾，另一腳膝蓋放鬆
+  // （雙腳由 IK 釘在原地）
+  const ws = Math.tanh(2.5 * Math.sin(t * 0.21 + seed * 1.7));
+  o[PX] = 0.03 * ws;
+  o[PR] = 0.045 * ws; o[TR] = -0.05 * ws;
+  o[LK] = 0.04 + 0.2 * Math.max(0, -ws); o[RK] = 0.04 + 0.2 * Math.max(0, ws);
+  o[LHR] = 0.035; o[RHR] = 0.035;
   o[TP] = 0.02; o[BOB] = 0.004 * Math.sin(t * 1.6 + seed);
   o[LSP] = 0.05 * Math.sin(t * 0.5 + seed); o[RSP] = 0.05 * Math.sin(t * 0.5 + seed + 1);
 }
@@ -229,6 +289,19 @@ const _m = new THREE.Matrix4(), _root = new THREE.Matrix4(), _pel = new THREE.Ma
 const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _one = new THREE.Vector3(1, 1, 1);
 const _yAxis = new THREE.Vector3(0, 1, 0);
 const _tmpV = new THREE.Vector3();
+const _H = new THREE.Vector3(), _A = new THREE.Vector3(), _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _off = new THREE.Vector3();
+const _tgt = [new THREE.Vector3(), new THREE.Vector3()], _ground = [0, 0];
+const _qr = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _rot = new THREE.Matrix4(), _tm = new THREE.Matrix4();
+
+// 骨頭世界矩陣 × 綁定姿勢的逆矩陣（純平移）→ 寫進骨頭貼圖
+function writeBone(D, base, b, m) {
+  const e = m.elements, o = BIND[b], k = base + b * 16;
+  for (let j = 0; j < 12; j++) D[k + j] = e[j];
+  D[k + 12] = e[12] - (e[0] * o[0] + e[4] * o[1] + e[8] * o[2]);
+  D[k + 13] = e[13] - (e[1] * o[0] + e[5] * o[1] + e[9] * o[2]);
+  D[k + 14] = e[14] - (e[2] * o[0] + e[6] * o[1] + e[10] * o[2]);
+  D[k + 15] = 1;
+}
 
 function local(out, x, y, z, rx, ry, rz, order = 'XYZ', sc = 1) {
   _e.set(rx, ry, rz, order);
@@ -300,8 +373,19 @@ export class Crowd {
     };
     p.mass = child ? 25 : 65;
     p.radius = 0.24 * p.s;
+    // 服裝剪裁與體型（用自己的亂數，不影響其他人的配置）
+    const r2 = new RNG(Math.floor(p.seed * 1000) + 7);
+    if (o.softSkirt && !p.skirt && female && !child && r2.chance(0.3)) p.skirt = true;
+    const sleeve = p.longSleeve ? r2.range(0.9, 0.98) : female && !child && r2.chance(0.2) ? 0.03 : r2.range(0.22, 0.36);
+    const pants = p.longPants ? r2.range(0.94, 1.0) : r2.chance(0.55) ? r2.range(0.3, 0.42) : r2.range(0.55, 0.68);
+    p.cloth = [sleeve, pants, r2.range(1.39, 1.425), r2.range(0.93, 0.985)];
+    const gw = clamp(r2.gauss(1, 0.06), 0.88, 1.18);
+    p.shape = child ? [0.92, 0.94, 0.95 * gw, 0.86] : female ? [0.9 * gw, 1.07 * gw, 0.95 * gw, 0.9 * Math.sqrt(gw)] : [1.04 * gw, 0.97 * gw, gw, Math.sqrt(gw)];
+    p.breath = r2.next() * TAU; p.exert = 0; p.breathV = 0;
+    p.pelM = new THREE.Matrix4();
+    p.legJ = [0, 1, 2, 3, 4, 5].map(() => new THREE.Vector3());
     if (child) p.hat = false;
-    if (p.skirt) p.longPants = false;
+    if (p.skirt) { p.longPants = false; p.cloth[1] = 0; p.cloth[3] = 0.975; p.skirtColor = p.bottom === '#1e1e24' ? '#2a2a30' : rngSkirt(p.seed); }
     poseStand(p.cur, 0, p.seed);
     p.y = this.terrain.height(p.x, p.z);
     this.people.push(p);
@@ -310,62 +394,95 @@ export class Crowd {
 
   addGroup(g) { this.groups.push(g); for (const m of g.members) m.group = g; return g; }
 
-  // ---------------- 建立繪製用 InstancedMesh ----------------
-  build() {
+  // ---------------- 建立繪製用網格 ----------------
+  build(opts = {}) {
     const parts = buildParts();
     const P = this.people;
     const N = P.length;
-    let nShort = 0, nLong = 0, nHat = 0, nSkirt = 0;
+    let nShort = 0, nLong = 0, nHat = 0;
     for (const p of P) {
-      p.hairIdx = -1; p.hatIdx = -1; p.skirtIdx = -1;
+      p.hairIdx = -1; p.hatIdx = -1;
       if (p.hairStyle === 'short') p.hairIdx = nShort++;
       else if (p.hairStyle === 'long') p.hairIdx = nLong++;
       if (p.hat) p.hatIdx = nHat++;
-      if (p.skirt) p.skirtIdx = nSkirt++;
     }
-    const mat = new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0 });
-    const skinMat = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0 });
-    const skirtMat = new THREE.MeshStandardMaterial({ roughness: 0.8, side: THREE.DoubleSide });
-    const mk = (geo, count, m = mat) => {
-      const im = new THREE.InstancedMesh(geo, m, Math.max(1, count));
+
+    // ---- 身體：一張連續的蒙皮網格，所有人一次畫完 ----
+    const bodyGeo = buildBodyGeometry(opts.detail ?? 1);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = bodyGeo.index;
+    for (const k of Object.keys(bodyGeo.attributes)) geo.setAttribute(k, bodyGeo.attributes[k]);
+    geo.instanceCount = N;
+    const c = new THREE.Color();
+    const col3 = (key) => {
+      const a = new Float32Array(N * 3);
+      P.forEach((p, i) => { c.set(key(p)); a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; });
+      return new THREE.InstancedBufferAttribute(a, 3);
+    };
+    geo.setAttribute('iTop', col3((p) => p.top));
+    geo.setAttribute('iBottom', col3((p) => (p.skirt ? p.skirtColor : p.bottom)));
+    geo.setAttribute('iSkin', col3((p) => p.skin));
+    geo.setAttribute('iShoe', col3((p) => p.shoes));
+    const v4 = (key) => {
+      const a = new Float32Array(N * 4);
+      P.forEach((p, i) => a.set(key(p), i * 4));
+      return new THREE.InstancedBufferAttribute(a, 4);
+    };
+    geo.setAttribute('iCloth', v4((p) => p.cloth));
+    geo.setAttribute('iShape', v4((p) => p.shape));
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e5);
+
+    this.boneData = new Float32Array(BONE_TEXELS * 4 * N);
+    this.boneTex = new THREE.DataTexture(this.boneData, BONE_TEXELS, N, THREE.RGBAFormat, THREE.FloatType);
+    this.boneTex.magFilter = this.boneTex.minFilter = THREE.NearestFilter;
+    const U = { uBones: { value: this.boneTex }, uFace: { value: makeFaceTexture() } };
+    const bodyMat = new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0 });
+    injectBodySkinning(bodyMat, U);
+    const depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    injectBodySkinning(depthMat, U, { color: false });
+    const body = new THREE.Mesh(geo, bodyMat);
+    body.customDepthMaterial = depthMat;
+    body.castShadow = true; body.receiveShadow = true;
+    body.frustumCulled = false;
+    body.name = 'bodies';
+    this.body = body;
+
+    // ---- 頭髮與帽子：剛性跟著頭 ----
+    const hairTex = makeHairTexture();
+    const hairMat = new THREE.MeshStandardMaterial({ map: hairTex, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.5, metalness: 0 });
+    const hairDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: hairTex, alphaTest: 0.5 });
+    const hatMat = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0 });
+    const mk = (g, count, mat) => {
+      const im = new THREE.InstancedMesh(g, mat, Math.max(1, count));
+      if (mat === hairMat) im.customDepthMaterial = hairDepth;
       im.count = count;
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       im.castShadow = true; im.receiveShadow = true;
       im.frustumCulled = false;
       return im;
     };
-    const M = {
-      torso: mk(parts.torso, N), pelvis: mk(parts.pelvis, N), head: mk(parts.head, N, skinMat),
-      hairShort: mk(parts.hairShort, nShort), hairLong: mk(parts.hairLong, nLong), hat: mk(parts.hat, nHat),
-      upperArm: mk(parts.upperArm, N * 2), forearm: mk(parts.forearm, N * 2, skinMat),
-      thigh: mk(parts.thigh, N * 2), shin: mk(parts.shin, N * 2), foot: mk(parts.foot, N * 2),
-      skirt: mk(parts.skirt, nSkirt, skirtMat),
-    };
-    const c = new THREE.Color();
-    for (let i = 0; i < N; i++) {
-      const p = P[i];
-      M.torso.setColorAt(i, c.set(p.top));
-      M.pelvis.setColorAt(i, c.set(p.skirt ? p.top : p.bottom));
-      M.head.setColorAt(i, c.set(p.skin));
-      for (let k = 0; k < 2; k++) {
-        M.upperArm.setColorAt(i * 2 + k, c.set(p.top));
-        M.forearm.setColorAt(i * 2 + k, c.set(p.longSleeve ? p.top : p.skin));
-        M.thigh.setColorAt(i * 2 + k, c.set(p.skirt ? p.skin : p.bottom));
-        M.shin.setColorAt(i * 2 + k, c.set(p.longPants ? p.bottom : p.skin));
-        M.foot.setColorAt(i * 2 + k, c.set(p.shoes));
-      }
+    const M = { hairShort: mk(parts.hairShort, nShort, hairMat), hairLong: mk(parts.hairLong, nLong, hairMat), hat: mk(parts.hat, nHat, hatMat) };
+    for (const p of P) {
       if (p.hairStyle === 'short') M.hairShort.setColorAt(p.hairIdx, c.set(p.hairColor));
       if (p.hairStyle === 'long') M.hairLong.setColorAt(p.hairIdx, c.set(p.hairColor));
       if (p.hat) M.hat.setColorAt(p.hatIdx, c.set(p.hatColor));
-      if (p.skirt) M.skirt.setColorAt(p.skirtIdx, c.set(p.bottom === '#1e1e24' ? '#2a2a30' : rngSkirt(p.seed)));
     }
     for (const k in M) if (M[k].instanceColor) M[k].instanceColor.needsUpdate = true;
     this.meshes = M;
+
     const g = new THREE.Group();
     g.name = 'crowd';
+    g.add(body);
     for (const k in M) g.add(M[k]);
-    this.group = g;
     this._writeInstances();
+
+    // ---- 裙子布料 ----
+    this.skirts = new SkirtSystem(this.terrain, this.physics.wind);
+    const srng = new RNG(4242);
+    for (const p of P) if (p.skirt) p.skirtSim = this.skirts.add(p, p.skirtColor, srng);
+    g.add(this.skirts.build());
+    for (let i = 0; i < 90; i++) this.skirts.update(1 / 45); // 先讓布料垂下來
+    this.group = g;
     return g;
   }
 
@@ -476,8 +593,27 @@ export class Crowd {
       if (p.override) this._updateOverride(p, dt);
     }
     for (const p of this.people) this._locomote(p, dt);
+    this._lookAtBalls(dt);
     for (const p of this.people) this._animate(p, dt, t);
     this._writeInstances();
+    if (this.skirts) this.skirts.update(dt, camera ? camera.position : null);
+  }
+
+  // 附近的人會轉頭看飛過來、滾過去的球和飛盤
+  _lookAtBalls(dt) {
+    this.lookCheck = (this.lookCheck ?? 0) - dt;
+    if (this.lookCheck > 0) return;
+    this.lookCheck = 0.25;
+    const movers = [];
+    for (const b of this.physics.balls) if (b.vel.lengthSq() > 9) movers.push(b);
+    for (const d of this.physics.discs) if (d.vel.lengthSq() > 9) movers.push(d);
+    for (const b of movers) {
+      this.forNear(b.pos.x, b.pos.z, 20, (p) => {
+        if (p.override || p.lookAt === b.pos || p.mode === 'lie') return;
+        const d = Math.hypot(p.x - b.pos.x, p.z - b.pos.z);
+        if (d < 20 && this.rng.next() < 0.6 * (1 - d / 20)) { p.lookAt = b.pos; p.lookT = this.rng.range(1.2, 3); }
+      });
+    }
   }
 
   _assignFreeBalls(dt) {
@@ -618,32 +754,107 @@ export class Crowd {
       const k = Math.sin(clamp(p.hitT / 0.7, 0, 1) * Math.PI);
       o[TP] -= 0.35 * k; o[LSP] += 1.1 * k; o[RSP] += 1.1 * k; o[LE] += 1.2 * k; o[RE] += 1.2 * k; o[HP] -= 0.2 * k;
     }
+    // 呼吸：跑完步後喘得比較快、比較深，再慢慢恢復
+    const exT = clamp((p.speed - 1.6) / 2, 0, 1);
+    p.exert += (exT - p.exert) * Math.min(1, dt * (exT > p.exert ? 0.6 : 0.07));
+    p.breath += dt * TAU * (0.22 + 0.45 * p.exert);
+    const br = Math.sin(p.breath);
+    p.breathV = br * (0.6 + 0.9 * p.exert);
+    if (!(ov && ov.type === 'knock')) {
+      o[TP] += 0.012 * br * (0.6 + p.exert); o[LSR] += 0.012 * br; o[RSR] += 0.012 * br; o[HP] -= 0.008 * br;
+    }
     const a = 1 - Math.exp(-p.blend * dt);
     const c = p.cur;
     for (let i = 0; i < NP; i++) c[i] += (o[i] - c[i]) * a;
     p.modeT += dt;
   }
 
-  // ---------------- 正向運動學 → instance matrices ----------------
+  // ---------------- 骨架：正向運動學 + 腳的 IK → 骨頭貼圖 ----------------
+  _legFK(pel, c, L, th, sh, ft) {
+    const hpv = L ? c[LHP] : c[RHP], kn = L ? c[LK] : c[RK];
+    local(_m, L ? 0.09 : -0.09, 0, 0, -hpv, L ? c[LHT] : -c[RHT], L ? c[LHR] : -c[RHR], 'XZY');
+    th.multiplyMatrices(pel, _m);
+    local(_m, 0, -0.43, 0, kn, 0, 0);
+    sh.multiplyMatrices(th, _m);
+    local(_m, 0, -0.42, 0, hpv - kn + c[ANK], 0, 0);
+    ft.multiplyMatrices(sh, _m);
+  }
+
+  // 兩骨 IK：膝蓋角度由餘弦定理決定，再把大腿繞髖關節轉向目標（保留原本膝蓋朝向的平面）；
+  // 腳掌貼合腳下地面的坡度（抬腳時逐漸回到原本的角度）
+  _legIK(p, pel, c, L, target, groundY, th, sh, ft) {
+    const s = p.s, T = this.terrain;
+    const hpv = L ? c[LHP] : c[RHP];
+    local(_m, L ? 0.09 : -0.09, 0, 0, -hpv, L ? c[LHT] : -c[RHT], L ? c[LHR] : -c[RHR], 'XZY');
+    th.multiplyMatrices(pel, _m);
+    _H.setFromMatrixPosition(th);
+    const a = 0.43 * s, b = 0.42 * s;
+    const d = clamp(_H.distanceTo(target), Math.abs(a - b) + 0.02 * s, (a + b) * 0.9995);
+    const kn2 = Math.PI - Math.acos(clamp((a * a + b * b - d * d) / (2 * a * b), -1, 1));
+    local(_m, 0, -0.43, 0, kn2, 0, 0);
+    sh.multiplyMatrices(th, _m);
+    _A.set(0, -0.42, 0).applyMatrix4(sh);
+    _v1.subVectors(_A, _H).normalize();
+    _v2.subVectors(target, _H).normalize();
+    _qr.setFromUnitVectors(_v1, _v2);
+    _rot.makeRotationFromQuaternion(_qr);
+    _tm.makeTranslation(-_H.x, -_H.y, -_H.z); th.premultiply(_tm);
+    th.premultiply(_rot);
+    _tm.makeTranslation(_H.x, _H.y, _H.z); th.premultiply(_tm);
+    local(_m, 0, -0.43, 0, kn2, 0, 0);
+    sh.multiplyMatrices(th, _m);
+    _A.set(0, -0.42, 0).applyMatrix4(sh);
+    const sn = Math.sin(p.heading), cs = Math.cos(p.heading);
+    const hF = T.height(_A.x + sn * 0.12 * s, _A.z + cs * 0.12 * s), hB = T.height(_A.x - sn * 0.06 * s, _A.z - cs * 0.06 * s);
+    const slope = clamp(Math.atan2(hF - hB, 0.18 * s), -0.45, 0.45);
+    const lift = clamp((_A.y - groundY - 0.075 * s) / (0.12 * s), 0, 1);
+    _e.set(c[ANK] + c[BP] - slope * (1 - lift), p.heading, 0, 'YXZ');
+    _q2.setFromEuler(_e);
+    ft.compose(_A, _q2, _s.set(s, s, s));
+  }
+
   _writeInstances() {
-    const M = this.meshes;
-    if (!M) return;
-    const P = this.people;
+    const M = this.meshes, D = this.boneData;
+    if (!M || !D) return;
+    const P = this.people, T = this.terrain;
     for (let i = 0; i < P.length; i++) {
       const p = P[i];
-      const c = p.cur;
+      const c = p.cur, s = p.s;
+      const base = i * BONE_TEXELS * 4;
       _q.setFromAxisAngle(_yAxis, p.heading);
-      _root.compose(_p.set(p.x, p.y, p.z), _q, _s.set(p.s, p.s, p.s));
+      _root.compose(_p.set(p.x, p.y, p.z), _q, _s.set(s, s, s));
       local(_m, 0, c[PY] + c[BOB], 0, c[BP], 0, c[PR]);
       _pel.multiplyMatrices(_root, _m);
-      M.pelvis.setMatrixAt(i, _pel);
-      if (p.skirtIdx >= 0) M.skirt.setMatrixAt(p.skirtIdx, _pel);
+      const ik = IK_MODES.has(p.mode) && !(p.override && p.override.type === 'knock');
+      if (ik) {
+        // 原本姿勢的腳位 → 依腳下地面高低移動成 IK 目標
+        for (let k = 0; k < 2; k++) {
+          this._legFK(_pel, c, k === 0, _th, _sh, _ft);
+          _tgt[k].setFromMatrixPosition(_ft);
+          _ground[k] = T.height(_tgt[k].x, _tgt[k].z);
+          _tgt[k].y += _ground[k] - p.y;
+        }
+        // 重心側移 + 骨盆下沉到較低那隻腳搆得到的高度
+        const drop = clamp(p.y - Math.min(_ground[0], _ground[1]), 0, 0.2 * s);
+        const px = c[PX] * s;
+        _pel.elements[12] += Math.cos(p.heading) * px;
+        _pel.elements[13] -= drop;
+        _pel.elements[14] -= Math.sin(p.heading) * px;
+        let extra = 0;
+        for (let k = 0; k < 2; k++) {
+          _H.set(k === 0 ? 0.09 : -0.09, 0, 0).applyMatrix4(_pel);
+          extra = Math.max(extra, _H.distanceTo(_tgt[k]) - 0.845 * s);
+        }
+        _pel.elements[13] -= Math.min(Math.max(0, extra), 0.12 * s);
+      }
+      writeBone(D, base, B.PEL, _pel);
+      p.pelM.copy(_pel);
       local(_m, 0, 0, 0, c[TP], c[TY], c[TR], 'YXZ');
       _tor.multiplyMatrices(_pel, _m);
-      M.torso.setMatrixAt(i, _tor);
+      writeBone(D, base, B.TOR, _tor);
       local(_m, 0, 0.495, 0, c[HP], c[HY], 0, 'YXZ', p.headScale);
       _head.multiplyMatrices(_tor, _m);
-      M.head.setMatrixAt(i, _head);
+      writeBone(D, base, B.HEAD, _head);
       if (p.hairStyle === 'short') M.hairShort.setMatrixAt(p.hairIdx, _head);
       else if (p.hairStyle === 'long') M.hairLong.setMatrixAt(p.hairIdx, _head);
       if (p.hatIdx >= 0) M.hat.setMatrixAt(p.hatIdx, _head);
@@ -655,31 +866,29 @@ export class Crowd {
         const sx = L ? 0.183 : -0.183;
         local(_m, sx, 0.455, 0, -(L ? c[LSP] : c[RSP]), 0, L ? c[LSR] : -c[RSR]);
         _ua.multiplyMatrices(_tor, _m);
-        M.upperArm.setMatrixAt(i * 2 + sIdx, _ua);
+        writeBone(D, base, L ? B.UA_L : B.UA_R, _ua);
         local(_m, 0, -0.29, 0, -(L ? c[LE] : c[RE]), 0, 0);
         _fa.multiplyMatrices(_ua, _m);
-        M.forearm.setMatrixAt(i * 2 + sIdx, _fa);
+        writeBone(D, base, L ? B.FA_L : B.FA_R, _fa);
         if (!L) p.hand.set(0, -0.3, 0).applyMatrix4(_fa);
       }
       // 腿
       _tmpV.set(0, 0, 0);
       for (let sIdx = 0; sIdx < 2; sIdx++) {
         const L = sIdx === 0;
-        const hpv = L ? c[LHP] : c[RHP], kn = L ? c[LK] : c[RK];
-        local(_m, L ? 0.09 : -0.09, 0, 0, -hpv, L ? c[LHT] : -c[RHT], L ? c[LHR] : -c[RHR], 'XZY');
-        _th.multiplyMatrices(_pel, _m);
-        M.thigh.setMatrixAt(i * 2 + sIdx, _th);
-        local(_m, 0, -0.43, 0, kn, 0, 0);
-        _sh.multiplyMatrices(_th, _m);
-        M.shin.setMatrixAt(i * 2 + sIdx, _sh);
-        local(_m, 0, -0.42, 0, hpv - kn + c[ANK], 0, 0);
-        _ft.multiplyMatrices(_sh, _m);
-        M.foot.setMatrixAt(i * 2 + sIdx, _ft);
-        _p.setFromMatrixPosition(_ft);
-        _tmpV.add(_p);
+        if (ik) this._legIK(p, _pel, c, L, _tgt[sIdx], _ground[sIdx], _th, _sh, _ft);
+        else this._legFK(_pel, c, L, _th, _sh, _ft);
+        writeBone(D, base, L ? B.TH_L : B.TH_R, _th);
+        writeBone(D, base, L ? B.SH_L : B.SH_R, _sh);
+        writeBone(D, base, L ? B.FT_L : B.FT_R, _ft);
+        const J = p.legJ, o = sIdx * 3;
+        J[o].setFromMatrixPosition(_th); J[o + 1].setFromMatrixPosition(_sh); J[o + 2].setFromMatrixPosition(_ft);
+        _tmpV.add(J[o + 2]);
       }
       p.capFeet.copy(_tmpV).multiplyScalar(0.5);
+      D[base + NB * 16] = p.breathV;
     }
+    this.boneTex.needsUpdate = true;
     for (const k in M) M[k].instanceMatrix.needsUpdate = true;
   }
 
