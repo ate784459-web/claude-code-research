@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { translucentLightsChunk } from './lighting.js';
 import { RNG, makeNoise2D, clamp, lerp, smoothstep } from './noise.js';
 
 // ------------------------------------------------------------------
@@ -198,6 +199,50 @@ attribute float aSway; uniform float uTime; uniform vec2 uWind;`)
   material.customProgramCacheKey = () => `wind-${flutter}-${noFlip}`;
 }
 
+// 在既有的 onBeforeCompile 之後再加上葉片透光
+function injectTranslucency(material, U, tint) {
+  const prev = material.onBeforeCompile;
+  const key = material.customProgramCacheKey();
+  material.onBeforeCompile = (shader, r) => {
+    if (prev) prev(shader, r);
+    shader.uniforms.uTransl = U.uTransl;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec4 uTransl;')
+      .replace('#include <lights_fragment_begin>', translucentLightsChunk('uTransl', tint));
+  };
+  material.customProgramCacheKey = () => `${key}-transl`;
+}
+
+// 樹冠內部的填充團塊：輪廓用雜訊切成不規則的葉叢邊緣，表面加上葉片尺度的明暗，
+// 才不會在葉縫間露出光滑的圓球
+function raggedCore(material) {
+  const prev = material.onBeforeCompile;
+  const key = material.customProgramCacheKey();
+  material.onBeforeCompile = (shader, r) => {
+    if (prev) prev(shader, r);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vCoreP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvCoreP = position;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vCoreP;
+float coreHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float coreNoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(coreHash(i), coreHash(i + vec3(1,0,0)), f.x), mix(coreHash(i + vec3(0,1,0)), coreHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(coreHash(i + vec3(0,0,1)), coreHash(i + vec3(1,0,1)), f.x), mix(coreHash(i + vec3(0,1,1)), coreHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+{
+  float cn = coreNoise(vCoreP * 1.6) * 0.6 + coreNoise(vCoreP * 5.3) * 0.4;
+  float ndv = abs(dot(normal, normalize(vViewPosition)));
+  if (ndv < 0.2 + 0.75 * cn) discard;
+  diffuseColor.rgb *= 0.6 + 0.8 * coreNoise(vCoreP * 9.0);
+}`);
+  };
+  material.customProgramCacheKey = () => `${key}-ragged`;
+}
+
 function windDepthMaterial(U, map, flutter) {
   const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: map || null, alphaTest: map ? 0.35 : 0 });
   injectWind(m, U, { flutter });
@@ -216,7 +261,7 @@ export class Vegetation {
     this.trees = [];
     this.colliders = [];
     this.eyeAnchors = [];
-    this.uniforms = { uTime: { value: 0 }, uWind: { value: new THREE.Vector2(0.6, 0.2) } };
+    this.uniforms = { uTime: { value: 0 }, uWind: { value: new THREE.Vector2(0.6, 0.2) }, uTransl: { value: new THREE.Vector4(0.45, 0.8, 4, 1) } };
     this.group = new THREE.Group();
     this.group.name = 'vegetation';
   }
@@ -388,12 +433,15 @@ export class Vegetation {
       map: leafTex, vertexColors: true, alphaTest: 0.38, side: THREE.DoubleSide, roughness: 0.85,
     });
     injectWind(leafMat, U, { flutter: true, noFlip: true });
+    // 透出的光比反射光更黃綠（葉綠素吸收藍光）
+    injectTranslucency(leafMat, U, [1.05, 1.1, 0.45]);
     const leafMesh = new THREE.Mesh(leaves.build(), leafMat);
     leafMesh.castShadow = true; leafMesh.receiveShadow = true;
     leafMesh.customDepthMaterial = windDepthMaterial(U, leafTex, true);
 
     const coreMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
     injectWind(coreMat, U);
+    raggedCore(coreMat);
     const coreMesh = new THREE.Mesh(cores.build(), coreMat);
     coreMesh.castShadow = true; coreMesh.receiveShadow = true;
     coreMesh.customDepthMaterial = windDepthMaterial(U, null, false);
@@ -402,6 +450,7 @@ export class Vegetation {
       map: makeFrondTexture(), vertexColors: true, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.8,
     });
     injectWind(frondMat, U, { flutter: true, noFlip: true });
+    injectTranslucency(frondMat, U, [1.05, 1.1, 0.45]);
     const frondMesh = new THREE.Mesh(fronds.build(), frondMat);
     frondMesh.castShadow = true;
     frondMesh.customDepthMaterial = windDepthMaterial(U, frondMat.map, true);
@@ -477,7 +526,6 @@ export class Vegetation {
     const tint = s.tint ?? 0;
     const nrm = new THREE.Vector3(), ax = new THREE.Vector3(), ay = new THREE.Vector3(), p = new THREE.Vector3();
     const q = new THREE.Quaternion(), e = new THREE.Euler();
-    const sunSide = new THREE.Vector3(0.6, 0.45, 0.65).normalize();
     for (const k of clusters) {
       if (this._blocksEye && this._blocksEye(k.c, k.r)) continue;
       const coreCol = new THREE.Color().setHSL(baseHue, 0.45, 0.07 + rng.next() * 0.04);
@@ -501,10 +549,10 @@ export class Vegetation {
         const col = new THREE.Color();
         if (autumn) col.setHSL(rng.range(0.05, 0.1), rng.range(0.55, 0.75), rng.range(0.36, 0.5));
         else col.setHSL(baseHue + rng.range(-0.025, 0.03), rng.range(pal.s[0], pal.s[1]), rng.range(pal.l[0], pal.l[1]));
-        // 外層與向陽面較亮
+        // 樹冠內部與底部看到的天空較少（向陽面的明暗交給即時光照）
         const outward = clamp(p.distanceTo(cc) / (CR + 0.01), 0.3, 1.15);
-        const sunny = 0.85 + 0.25 * Math.max(0, nrm.dot(sunSide));
-        col.multiplyScalar((0.7 + 0.4 * outward) * sunny);
+        const skyVis = 0.88 + 0.1 * nrm.y;
+        col.multiplyScalar((0.7 + 0.4 * outward) * skyVis);
         // 前景樹冠：上半部受光、下半部在陰影裡（照片右下角）
         if (s.hero) col.multiplyScalar(lerp(0.3, 1.15, smoothstep(cc.y - CH * 0.5, cc.y + CH * 0.9, p.y)));
         leaves.card(p, ax, ay, nrm, col, 0.75);
